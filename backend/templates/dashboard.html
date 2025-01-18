@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Cluster Dashboard</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Add your custom styles here */
+        body {
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Kubernetes Cluster Dashboard</h1>
+        <p>Total Clusters: {{ cluster_count }}</p>
+        
+        <h2>Clusters</h2>
+        <ul class="list-group mb-4">
+        {% for cluster_name in clusters %}
+            <li class="list-group-item">
+                <a href="/cluster/{{ cluster_name }}">{{ cluster_name }}</a>
+            </li>
+        {% endfor %}
+        </ul>
+
+        <h2>Add New Cluster</h2>
+        <form id="addClusterForm">
+            <div class="form-group">
+                <label for="name">Cluster Name</label>
+                <input type="text" class="form-control" id="name" placeholder="Cluster Name" required>
+            </div>
+            <div class="form-group">
+                <label for="ip">Master Node IP</label>
+                <input type="text" class="form-control" id="ip" placeholder="Master Node IP" required>
+            </div>
+            <div class="form-group">
+                <label for="port">SSH Port</label>
+                <input type="number" class="form-control" id="port" placeholder="SSH Port" required>
+            </div>
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" class="form-control" id="username" placeholder="Username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" class="form-control" id="password" placeholder="Password" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Cluster</button>
+        </form>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+    <script>
+        document.getElementById('addClusterForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const name = document.getElementById('name').value;
+    const ip = document.getElementById('ip').value;
+    const port = parseInt(document.getElementById('port').value);
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const interval = 10  // Ensure interval is captured
+
+    try {
+        const response = await fetch('/add_cluster', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',  // Ensure JSON content type
+            },
+            body: JSON.stringify({
+                name: name,
+                ip: ip,
+                port: port,
+                username: username,
+                password: password,
+                interval: interval  // Send interval in the request
+            }),
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Failed to add cluster: ' + (result.detail || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An unexpected error occurred. Please try again.');
+    }
+});
+
+
+    </script>
+</body>
+</html>

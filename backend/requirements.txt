@@ -1,0 +1,6 @@
+paramiko
+python-multipart
+jinja2
+fastapi 
+uvicorn 
+
