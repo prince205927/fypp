@@ -1,14 +1,12 @@
-import {  useGetClusterMetricsQuery } from '../features/clusters/clusterApi'
+import {  useGetBuildReportQuery, useGetClusterDetailsQuery, useGetClusterMetricsQuery } from '../features/clusters/clusterApi'
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line } from 'recharts';
 export const NodeMetrics = ({ nodeName, clusterName, isVisible }) => {
     const { data: nodeMetrics, isLoading } = useGetClusterMetricsQuery(
       { clusterName, nodeName },
       { skip: !isVisible }
     );
-  
-  
 
-    if (isLoading) {
+      if (isLoading) {
       return <div>Loading metrics for {nodeName}...</div>;
     }
   

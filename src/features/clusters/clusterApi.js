@@ -1,4 +1,6 @@
 import { baseApi } from "../../services/api";
+
+
 export const clusterApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     getClusters: builder.query({
@@ -25,6 +27,15 @@ export const clusterApi = baseApi.injectEndpoints({
             ]
           : [{ type: "Clusters", id: "LIST" }],
     }),
+    addCluster: builder.mutation({
+query: (clusterData) => ({
+url: "add_cluster",
+method: "POST",
+body: clusterData,
+}),
+invalidatesTags: ["Clusters"],
+}),
+
     getClusterMetrics: builder.query({
       query: ({ clusterName, nodeName }) => ({
         url: "get_cluster_metrics",
@@ -35,21 +46,18 @@ export const clusterApi = baseApi.injectEndpoints({
       ],
     }),
 
-  
-
     getClusterDetails: builder.query({
       query: (clusterName) => ({
         url: `/cluster/${clusterName}`,
         method: 'GET',
       }),
       transformResponse: (response) => {
-  
         const transformedNodes = response.nodes.map(node => ({
           name: node.name,
           status: node.status,
           roles: node.roles,
         }));
- 
+
         const transformedNodeStats = Object.entries(response.node_stats).reduce((acc, [nodeName, stats]) => {
           acc[nodeName] = stats.map(stat => ({
             timestamp: stat[0],
@@ -58,7 +66,7 @@ export const clusterApi = baseApi.injectEndpoints({
           }));
           return acc;
         }, {});
-   
+
         const transformedPodStats = Object.entries(response.pod_stats).reduce((acc, [podName, stats]) => {
           acc[podName] = stats.map(stat => ({
             timestamp: stat[0],
@@ -67,13 +75,12 @@ export const clusterApi = baseApi.injectEndpoints({
           }));
           return acc;
         }, {});
-    
+
         return {
           ...response,
           nodes: transformedNodes,
           node_stats: transformedNodeStats,
           pod_stats: transformedPodStats,
-    
           deployments: response.deployments.map(deployment => ({
             namespace: deployment.namespace,
             name: deployment.name,
@@ -83,98 +90,91 @@ export const clusterApi = baseApi.injectEndpoints({
           })),
         };
       },
-    
+
       providesTags: ['ClusterDetails'],
     }),
-     
-        updateReplicas: builder.mutation({
-          query: (data) => {
-            const formData = new FormData();
-            formData.append('cluster_name', data.clusterName);
-            formData.append('deployment_name', data.deploymentName);
-            formData.append('replicas', data.replicas.toString());
-            
-            return {
-              url: 'update_replicas',
-              method: 'POST',
-              body: formData,
-            };
-          },
-   
-          invalidatesTags: (result, error, data) => [
-     
-            { type: 'ClusterDetails', id: data.clusterName },
-      
-            'Pods',
-            'Deployments',
-            'ClusterDetails'
-          ],
-          
 
-          async onQueryStarted(data, { dispatch, queryFulfilled }) {
-            try {
-              // Optimistically update the local cache
-              const patchResult = dispatch(
-                clusterApi.util.updateQueryData('getClusterDetails', data.clusterName, (draft) => {
-                  // Find and update the specific deployment's replicas
-                  const imageToUpdate = draft.parsedImages.find(
-                    img => img.deployment === data.deploymentName
-                  );
-                  
-                  if (imageToUpdate) {
-                    imageToUpdate.replicas = data.replicas;
-                  }
-                })
+    updateReplicas: builder.mutation({
+      query: (data) => {
+        const formData = new FormData();
+        formData.append('cluster_name', data.clusterName);
+        formData.append('deployment_name', data.deploymentName);
+        formData.append('replicas', data.replicas.toString());
+
+        return {
+          url: 'update_replicas',
+          method: 'POST',
+          body: formData,
+        };
+      },
+
+      invalidatesTags: (result, error, data) => [
+        { type: 'ClusterDetails', id: data.clusterName },
+        'Pods',
+        'Deployments',
+        'ClusterDetails',
+      ],
+
+      async onQueryStarted(data, { dispatch, queryFulfilled }) {
+        try {
+          // Optimistically update the local cache
+          const patchResult = dispatch(
+            clusterApi.util.updateQueryData('getClusterDetails', data.clusterName, (draft) => {
+              // Find and update the specific deployment's replicas
+              const imageToUpdate = draft.parsedImages.find(
+                img => img.deployment === data.deploymentName
               );
-    
-    
-              // Wait for the actual mutation to complete
-              await queryFulfilled;
-            } catch {
-              // If mutation fails, revert the optimistic update
-              patchResult.undo();
-            }
-          }
-        }),
-    
+
+              if (imageToUpdate) {
+                imageToUpdate.replicas = data.replicas;
+              }
+            })
+          );
+
+          // Wait for the actual mutation to complete
+          await queryFulfilled;
+        } catch {
+          // If mutation fails, revert the optimistic update
+          patchResult.undo();
+        }
+      }
+    }),
+
     uploadDeployment: builder.mutation({
       query: ({ file, clusterName }) => {
         // Validate inputs
         if (!file) {
           throw new Error('No file selected');
         }
-    
-    
+
         if (!clusterName) {
           throw new Error('Cluster name is required');
         }
-    
-    
+
         // Create FormData
         const formData = new FormData();
         formData.append('cluster_name', clusterName);
         formData.append('file', file, file.name);
-    
-    
+
         return {
           url: 'http://127.0.0.1:8000/upload_deployment',
           method: 'POST',
           body: formData,
-          
+
           // Explicit fetch options
           fetchOptions: {
             timeout: 30000, // 30-second timeout
           }
         };
       },
-      
+
       // Enhanced error handling
       transformErrorResponse: (error, meta, arg) => {
         console.group('Upload Deployment Error');
         console.error('Full Error Object:', error);
         console.log('Metadata:', meta);
         console.log('Arguments:', arg);
-        
+
         return {
           message: error.data?.error || 'Network error - Please check your connection',
           details: error.data?.details || error.message,
@@ -182,7 +182,7 @@ export const clusterApi = baseApi.injectEndpoints({
         };
       }
     }),
-    
+
     openTerminal: builder.mutation({
       query: (clusterName) => {
         const formData = new FormData();
@@ -196,7 +196,6 @@ export const clusterApi = baseApi.injectEndpoints({
       },
     }),
 
-    // RTK Query mutation with improved error handling and status tracking
     updateImage: builder.mutation({
       query: ({ 
         clusterName, 
@@ -205,12 +204,18 @@ export const clusterApi = baseApi.injectEndpoints({
         newImage,
         namespace = 'default'
       }) => {
+        // Validate inputs
+        if (!clusterName || !deploymentName || !containerName || !newImage) {
+          throw new Error('Missing required parameters for image update');
+        }
+    
+    
         // Create FormData for multipart/form-data
         const formData = new FormData();
         formData.append('cluster_name', clusterName);
         formData.append('deployment', deploymentName);
         formData.append('container', containerName);
-        formData.append('new_image', newImage);
+        formData.append('newImage', newImage);
         formData.append('namespace', namespace);
     
     
@@ -219,90 +224,122 @@ export const clusterApi = baseApi.injectEndpoints({
           method: 'POST',
           body: formData,
           
+          // Optional: Custom headers if needed
+          headers: {
+            // You can add custom headers here if required
+          },
+    
+    
           // Explicit fetch options
           fetchOptions: {
-            timeout: 30000 // 30-second timeout
+            timeout: 30000, // 30-second timeout
           }
         };
       },
-      
+    
+    
       // Enhanced response transformation
       transformResponse: (response, meta, arg) => {
-        console.group('Image Update Success');
+        // Comprehensive logging
+        console.group('🚀 Image Update Success');
         console.log('Full Response:', response);
         console.log('Update Details:', {
           clusterName: arg.clusterName,
           deploymentName: arg.deploymentName,
           containerName: arg.containerName,
-          newImage: arg.newImage
+          newImage: arg.newImage,
+          timestamp: new Date().toISOString()
         });
         console.groupEnd();
-        
+    
+    
+        // Structured response
         return {
-          success: response.success,
-          message: response.message,
-          details: response.details,
-          updateOutput: response.update_output,
-          verificationOutput: response.verification_output
+          success: true,
+          message: response?.message || 'Image updated successfully',
+          details: {
+            clusterName: arg.clusterName,
+            deploymentName: arg.deploymentName,
+            containerName: arg.containerName,
+            newImage: arg.newImage,
+            updatedAt: new Date().toISOString()
+          },
+          rawResponse: response
         };
       },
-      
+    
+    
       // Enhanced error transformation
       transformErrorResponse: (response, meta, arg) => {
-        console.group('Image Update Error');
+        // Comprehensive error logging
+        console.group('❌ Image Update Error');
         console.error('Error Response:', response);
         console.log('Error Metadata:', meta);
         console.log('Error Arguments:', arg);
+        console.log('Timestamp:', new Date().toISOString());
         console.groupEnd();
-        
+    
+    
+        // Structured error response
         return {
           error: true,
+          statusCode: response.status,
           message: response.data?.detail || 'Failed to update image',
-          details: response.data?.detail,
-          statusCode: response.status
+          details: {
+            clusterName: arg.clusterName,
+            deploymentName: arg.deploymentName,
+            containerName: arg.containerName,
+            newImage: arg.newImage,
+            failedAt: new Date().toISOString()
+          },
+          rawError: response
         };
+      },
+    
+    
+      // Invalidate and refetch related data
+      invalidatesTags: (result, error, arg) => [
+        { type: 'Deployments', id: arg.clusterName },
+        { type: 'ClusterDetails', id: arg.clusterName },
+        'Pods'
+      ],
+    
+    
+      // Optimistic update mechanism
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        try {
+          // Optimistically update the local cache
+          const patchResult = dispatch(
+            clusterApi.util.updateQueryData('getClusterDetails', arg.clusterName, (draft) => {
+              // Find and update the specific deployment's image
+              const deploymentToUpdate = draft.deployments.find(
+                dep => dep.name === arg.deploymentName && 
+                       dep.namespace === (arg.namespace || 'default')
+              );
+    
+    
+              if (deploymentToUpdate) {
+                deploymentToUpdate.image = arg.newImage;
+              }
+            })
+          );
+    
+    
+          // Wait for the actual mutation to complete
+          await queryFulfilled;
+        } catch (error) {
+          // If mutation fails, revert the optimistic update
+          patchResult.undo();
+    
+    
+          // Log the error
+          console.error('Optimistic update failed', error);
+        }
       }
     }),
-    getJenkinsJobs: builder.query({
-      query: () => '/api/jobs',
-      transformResponse: (response) => response.jobs || [],
-    }),
 
-    // Get Job Build History
-    getJobBuildHistory: builder.query({
-      query: (jobName) => `/api/job/${jobName}/builds`,
-      transformResponse: (response) => response.builds || [],
-    }),
+   
 
-    // Get Specific Build Report
-    getBuildReport: builder.query({
-      query: ({ jobName, buildNumber }) => 
-        `/api/build/${jobName}/${buildNumber}`,
-    }),
-
-    // Trigger Jenkins Job
-    triggerJob: builder.mutation({
-      query: (jobName) => ({
-        url: `/api/job/${jobName}/trigger`,
-        method: 'POST',
-      }),
-      transformResponse: (response) => ({
-        message: response.message,
-      }),
-    }),
-
-    // Get Job Details
-    getJobDetails: builder.query({
-      query: (jobName) => `/api/job/${jobName}/details`,
-    }),
-
-    // Get Console Output
-    getConsoleOutput: builder.query({
-      query: ({ jobName, buildNumber }) => 
-        `/api/job/${jobName}/${buildNumber}/consoleText`,
-    }),
-
-    // Update Cluster Interval
     updateClusterInterval: builder.mutation({
       query: ({ clusterName, interval }) => ({
         url: 'set_interval',

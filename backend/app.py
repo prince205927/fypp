@@ -21,15 +21,23 @@ import os
 import uuid
 import sqlite3
 import paramiko
-
+import requests
+import xml.etree.ElementTree as ET
+from fastapi import APIRouter, HTTPException
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
+import os
+import base64
+import requests
+from typing import Dict, Optional, Any
+from fastapi import HTTPException, Query
+from pydantic import BaseModel, validator
+jenkins_router = APIRouter()
 
 DB_POOL_SIZE = 5
 db_pool = queue.Queue(maxsize=DB_POOL_SIZE)
 
-# Jenkins server details
-JENKINS_URL = "http://10.200.7.76:8080"
-JENKINS_USER = "jenkins"
-JENKINS_TOKEN = "1116348b6192b7a2089f4374e86e343e82"
+
 
 # Initialize the connection pool
 def init_db_pool():
@@ -60,21 +68,20 @@ clusters = {}
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+# CORS Configuration
 app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",  # Vite default
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:8000/api/jobs",
-            "http://localhost:3000",  # React default
-            "http://127.0.0.1:3000",
-            "*"  
-        ],
-        allow_credentials=True,
-        allow_methods=["*"],  # Allows all methods
-        allow_headers=["*"],  # Allows all headers
-    )
-
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",  # React default
+        "http://127.0.0.1:3000",
+        "*"  # This allows all origins; use cautiously in production
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 # Initialize the SQLite database
 def init_db():
     conn = sqlite3.connect('cluster.db')
@@ -356,65 +363,7 @@ async def list_clusters():
         }
 
 
-@app.post("/update_image")
-async def update_image(request: Request):
-    try:
-        data = await request.json()
-        cluster_name = data['cluster_name']
-        old_image = data['old_image']
-        new_image = data['new_image']
-        replicas = data['replicas']
 
-        conn = sqlite3.connect('cluster.db')
-        c = conn.cursor()
-        
-        # Get cluster credentials
-        c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
-        cluster = c.fetchone()
-        
-        if not cluster:
-            return {"error": f"Cluster '{cluster_name}' not found"}
-
-        # Create SSH connection
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(cluster[0], port=cluster[1], username=cluster[2], password=cluster[3])
-
-        # Get deployment name from old image
-        c.execute("SELECT pod_name FROM pods WHERE cluster_name = ? AND image = ?", (cluster_name, old_image))
-        deployment_name = c.fetchone()
-
-        if not deployment_name:
-            return {"error": "Original deployment not found"}
-
-        deployment_name = deployment_name[0]
-
-        # Update deployment
-        commands = [
-            f"kubectl set image deployment/{deployment_name} {deployment_name}={new_image}",
-            f"kubectl scale deployment/{deployment_name} --replicas={replicas}"
-        ]
-
-        for command in commands:
-            stdin, stdout, stderr = ssh.exec_command(command)
-            error = stderr.read().decode('utf-8')
-            if error:
-                return {"error": error}
-
-        # Update database
-        c.execute("""
-            UPDATE pods 
-            SET image = ?
-            WHERE cluster_name = ? AND pod_name = ?
-        """, (new_image, cluster_name, deployment_name))
-        
-        conn.commit()
-        conn.close()
-        ssh.close()
-
-        return {"message": "Image updated successfully"}
-    except Exception as e:
-        return {"error": str(e)}
 
 @app.post("/delete_image")
 async def delete_image(request: Request):
@@ -856,63 +805,57 @@ async def open_terminal(
             detail=f"Failed to fetch terminal URL: {str(e)}"
         )
 
+def execute_kubectl_command(ssh_client, command: str) -> str:
+    try:
+        
+
+        # Execute kubectl command over SSH
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+        if error:
+            raise Exception(f"Error: {error}")
+        
+        return output
+    except Exception as e:
+        return str(e)
+    finally:
+        ssh_client.close()
+
+
 @app.post("/update_image")
 async def update_image(
     cluster_name: str = Form(...),
-    deployment_name: str = Form(...), 
-    container_name: str = Form(...), 
-    new_image: str = Form(...)
+    deployment: str = Form(...), 
+    container: str = Form(...), 
+    newImage: str = Form(...),
+    namespace: str = Form(...)
 ):
     try:
-        # Get cluster credentials
+         # Get cluster credentials
         conn = sqlite3.connect('cluster.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
-        conn.close()
 
-
-        if not cluster:
-            return JSONResponse(content={"error": f"Cluster '{cluster_name}' not found"}, status_code=404)
-
-
-        # Create SSH connection
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(cluster[0], port=cluster[1], username=cluster[2], password=cluster[3])
 
-
-        # Construct kubectl command to update image
-        command = f"kubectl set image deployment/{deployment_name} {container_name}={new_image}"
-        
-        # Execute the command
-        stdin, stdout, stderr = ssh.exec_command(command)
-        
-        # Read output and error streams
-        output = stdout.read().decode('utf-8')
-        error = stderr.read().decode('utf-8')
-        
-        ssh.close()
-
-
-        # Check for errors
-        if error:
-            return JSONResponse(content={
-                "error": f"Failed to update image: {error}",
-                "command": command
-            }, status_code=500)
-
-
-        return JSONResponse(content={
-            "message": "Image updated successfully",
-            "output": output
-        })
-
-
+        conn.close()
+        if newImage:
+            command = f"kubectl set image deployment/{deployment} {container}={newImage}"
+            result = execute_kubectl_command(ssh, command)
+            return JSONResponse(content={"message": f"Image update result: {result}"})
+        return JSONResponse(content={"message": "No image provided"})
+    
+    except paramiko.AuthenticationException:
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    except paramiko.SSHException as ssh_exception:
+        raise HTTPException(status_code=500, detail=f"SSH connection error: {str(ssh_exception)}")
     except Exception as e:
-        return JSONResponse(content={
-            "error": f"An unexpected error occurred: {str(e)}"
-        }, status_code=500)
+        raise HTTPException(status_code=500, detail=str(e))  
 
 
 
@@ -1444,173 +1387,7 @@ async def get_deployments(cluster_name: str):
         return {"error": f"Failed to get deployments: {str(e)}"}
 
 
-# Update image of a deployment
-# @app.post("/update_image")
-# async def update_image(cluster_name: str = Form(...), namespace: str = Form(...), deployment: str = Form(...), new_image: str = Form(...)):
-#     try:
-#         conn = sqlite3.connect('cluster.db')
-#         c = conn.cursor()
-#         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
-#         cluster = c.fetchone()
-#         conn.close()
 
-#         if not cluster:
-#             return {"error": f"Cluster '{cluster_name}' not found"}
-
-#         ssh = paramiko.SSHClient()
-#         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-#         ssh.connect(cluster[0], port=cluster[1], username=cluster[2], password=cluster[3])
-
-#         command = f"kubectl set image deployment/{deployment} {deployment}={new_image} -n {namespace}"
-#         stdin, stdout, stderr = ssh.exec_command(command)
-#         output = stdout.read().decode('utf-8')
-#         error = stderr.read().decode('utf-8')
-
-#         ssh.close()
-
-#         if error:
-#             return {"error": error}
-#         return {"message": f"Image updated successfully: {output}"}
-#     except Exception as e:
-#         return {"error": f"Failed to update image: {str(e)}"}
-
-@app.post("/update_image")
-async def update_image(
-    cluster_name: str = Form(...),
-    namespace: str = Form(default='default'),
-    deployment: str = Form(...),
-    container: str = Form(...),
-    new_image: str = Form(...)
-):
-    
-    try:
-        # Database connection with context manager
-        with sqlite3.connect('cluster.db') as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT ip, port, username, password FROM clusters WHERE name = ?", 
-                (cluster_name,)
-            )
-            cluster = c.fetchone()
-
-        if not cluster:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Cluster '{cluster_name}' not found"
-            )
-
-        # Validate image format
-        if not _validate_image_format(new_image):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid image format. Must be in format: repository/image:tag"
-            )
-
-        # Execute update with retry mechanism
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                result = await _execute_kubernetes_update(
-                    cluster=cluster,
-                    namespace=namespace,
-                    deployment=deployment,
-                    container=container,
-                    new_image=new_image
-                )
-                
-                if result.get("success"):
-                    return result
-                
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise
-                
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to update image after maximum retry attempts"
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def _execute_kubernetes_update(
-    cluster: tuple,
-    namespace: str,
-    deployment: str,
-    container: str,
-    new_image: str
-) -> dict:
-    """Execute the Kubernetes deployment update with verification."""
-    
-    ssh = paramiko.SSHClient()
-    try:
-        # Configure SSH connection
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(
-            cluster[0],
-            port=cluster[1],
-            username=cluster[2],
-            password=cluster[3],
-            timeout=10
-        )
-
-        # Update command
-        update_cmd = (
-            f"kubectl set image deployment/{deployment} "
-            f"{container}={new_image} "
-            f"-n {namespace} --record"
-        )
-        
-        logger.info(f"Executing update command: {update_cmd}")
-        _, stdout, stderr = ssh.exec_command(update_cmd)
-        
-        update_output = stdout.read().decode('utf-8')
-        update_error = stderr.read().decode('utf-8')
-
-        if update_error and "deployment.apps" not in update_error:
-            raise Exception(f"Update failed: {update_error}")
-
-        # Verify the rollout status
-        verify_cmd = (
-            f"kubectl rollout status deployment/{deployment} "
-            f"-n {namespace} --timeout=60s"
-        )
-        
-        logger.info("Verifying deployment rollout status")
-        _, stdout, stderr = ssh.exec_command(verify_cmd)
-        
-        verify_output = stdout.read().decode('utf-8')
-        verify_error = stderr.read().decode('utf-8')
-
-        if verify_error:
-            raise Exception(f"Verification failed: {verify_error}")
-
-        return {
-            "success": True,
-            "message": "Image updated successfully",
-            "update_output": update_output,
-            "verification_output": verify_output,
-            "details": {
-                "deployment": deployment,
-                "namespace": namespace,
-                "container": container,
-                "new_image": new_image
-            }
-        }
-
-    finally:
-        ssh.close()
-
-def _validate_image_format(image: str) -> bool:
-    """Validate the format of the container image."""
-    parts = image.split('/')
-    if len(parts) < 2:
-        return False
-    
-    if ':' not in parts[-1]:
-        return False
-    
-    return True
 
 
 @app.post("/update_replicas")
@@ -1682,105 +1459,7 @@ async def update_replicas(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))   
 
-# @app.get("/api/jobs")
-# def get_jobs():
-#     """Fetch the list of Jenkins jobs."""
-#     url = f"{JENKINS_URL}/api/json?tree=jobs[name,url]"
-#     response = requests.get(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    
-#     if response.status_code != 200:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to fetch jobs.")
-    
-#     jobs = response.json().get("jobs", [])
-#     return {"jobs": jobs}
 
-
-# @app.get("/api/job/{job_name}/builds")
-# def get_job_build_history(job_name: str):
-#     """Fetch the build history of a specific job."""
-#     url = f"{JENKINS_URL}/job/{job_name}/api/json?tree=builds[number,url,result]"
-#     response = requests.get(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    
-#     if response.status_code != 200:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to fetch build history.")
-    
-#     builds = response.json().get("builds", [])
-#     return {"job_name": job_name, "builds": builds}
-
-
-# @app.get("/api/build/{job_name}/{build_number}")
-# def get_build_report(job_name: str, build_number: int):
-#     """Fetch a specific build's details."""
-#     url = f"{JENKINS_URL}/job/{job_name}/{build_number}/api/json"
-#     response = requests.get(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    
-#     if response.status_code != 200:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to fetch build report.")
-    
-#     return response.json()
-
-
-# @app.post("/api/job/{job_name}/trigger")
-# def trigger_job(job_name: str):
-#     """Trigger a specific Jenkins job."""
-#     url = f"{JENKINS_URL}/job/{job_name}/build?token=abcd"
-#     response = requests.post(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    
-#     if response.status_code != 201:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to trigger job.")
-    
-#     return {"message": f"Job '{job_name}' triggered successfully!"}
-
-
-# @app.get("/api/job/{job_name}/details")
-# def get_job_details(job_name: str):
-#     """Fetch the detailed configuration of a Jenkins job."""
-#     url = f"{JENKINS_URL}/job/{job_name}/config.xml"
-#     response = requests.get(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-
-#     if response.status_code != 200:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to fetch job details.")
-
-#     # Parse the XML response
-#     job_config = ET.fromstring(response.text)
-    
-#     # Extract description (direct child of <flow-definition>)
-#     description = job_config.find("description").text if job_config.find("description") is not None else "No description"
-
-#     # Extract project URL from nested <properties>/<com.coravy.hudson.plugins.github.GithubProjectProperty>
-#     project_url = "No URL"
-#     project_url_node = job_config.find(".//com.coravy.hudson.plugins.github.GithubProjectProperty/projectUrl")
-#     if project_url_node is not None:
-#         project_url = project_url_node.text
-
-#     # Extract pipeline script
-#     script = "No pipeline script"
-#     pipeline_script_node = job_config.find(".//definition/script")
-#     if pipeline_script_node is not None:
-#         script = pipeline_script_node.text
-
-#     job_details = {
-#         "description": description,
-#         "projectUrl": project_url,
-#         "script": script
-#     }
-    
-#     return job_details
-
-# @app.get("/api/job/{job_name}/{build_number}/consoleText")
-# async def get_console_output(job_name: str, build_number: int):
-#     # Construct the URL for the Jenkins console output
-#     url = f"{JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
-    
-#     # Fetch console output from Jenkins using basic authentication
-#     response = requests.get(url, auth=(JENKINS_USER, JENKINS_TOKEN))
-    
-#     # Check if the request was successful
-#     if response.status_code == 200:
-#         return {"consoleText": response.text}  # Return the console output
-#     else:
-#         raise HTTPException(status_code=response.status_code, detail="Failed to fetch console output.")
-    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

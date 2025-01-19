@@ -161,14 +161,20 @@ export function ImagesSection({ clusterDetails, clusterName }) {
 
   const handleImageUpdate = async () => {
     try {
-      await updateImage({
-        clusterName: clusterName,
+      // Use values from editImageModal state
+      const result = await updateImage({
+        clusterName,  // from props
         deploymentName: editImageModal.deployment,
         containerName: editImageModal.container,
         newImage: editImageModal.newImage,
+        namespace: 'default'  // You can make this dynamic if needed
       }).unwrap();
-
-      toast.success("Image updated successfully");
+  
+  
+      // Success handling
+      toast.success(result.message || "Image updated successfully");
+      
+      // Close the modal
       setEditImageModal({
         open: false,
         deployment: "",
@@ -177,8 +183,16 @@ export function ImagesSection({ clusterDetails, clusterName }) {
         newImage: "",
       });
     } catch (error) {
-      console.error("Failed to update image", error);
-      toast.error("Failed to update image");
+      // Error handling
+      console.error('Image Update Failed:', error);
+      
+      // Use a more robust error message
+      const errorMessage = 
+        error.data?.detail || 
+        error.message || 
+        "Failed to update image";
+      
+      toast.error(errorMessage);
     }
   };
 

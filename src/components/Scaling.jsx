@@ -6,4 +6,4 @@ const Scaling = () => {
   )
 }
 
-export default Scaling;
+export default Scaling
