@@ -93,44 +93,56 @@ export default function MonitoringDashboard() {
   }
 
 
-  return (
-    <div className={`flex h-screen ${isDarkMode ? 'dark bg-gray-900 text-white' : 'bg-gray-50'}`}>
-      {/* Sidebar */}
-      <aside className={`w-64 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-r p-4`}>
-        <div className="flex items-center gap-2 mb-8">
-          <h1 className={`text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
-            Cluster Monitor
-          </h1>
-        </div>
-        
-        <nav className="space-y-1">
-          <NavItem 
-            icon={<Grid size={20} />} 
-            label="Overview" 
-            href="/dashboard" 
-            active={true} 
-            darkMode={isDarkMode} 
-          />
-          <NavItem 
-            icon={<Server size={20} />} 
-            label="Jenkins" 
-            href="/jenkins" 
-            darkMode={isDarkMode} 
-          />
-          <NavItem 
-            icon={<User  size={20} />} 
-            label="Account" 
-            href="/account" 
-            darkMode={isDarkMode} 
-          />
-          <NavItem 
-            icon={<Settings size={20} />} 
-            label="Settings" 
-            href="/settings" 
-            darkMode={isDarkMode} 
-          />
+
+    return (
+      <div className={`flex flex-col h-screen ${isDarkMode ? 'dark bg-gray-900 text-white' : 'bg-gray-50'}`}>
+        {/* Top Navigation */}
+        <nav className={`flex items-center justify-between p-4 border-b ${
+          isDarkMode 
+            ? 'bg-gray-800 border-gray-700' 
+            : 'bg-white border-gray-200'
+        }`}>
+          <div className="flex items-center space-x-4">
+          
+            
+            <div className="flex space-x-2">
+              <Link 
+                to="/dashboard" 
+                className={`px-3 py-2 rounded-md flex items-center space-x-2 ${
+                  location.pathname === '/dashboard'
+                    ? (isDarkMode 
+                        ? 'bg-gray-700 text-white' 
+                        : 'bg-gray-200 text-gray-800')
+                    : (isDarkMode 
+                        ? 'hover:bg-gray-700 text-gray-300' 
+                        : 'hover:bg-gray-100 text-gray-600')
+                }`}
+              >
+                <Grid size={16} />
+                <span>Overview</span>
+              </Link>
+              
+              <Link 
+                to="/jenkins" 
+                className={`px-3 py-2 rounded-md flex items-center space-x-2 ${
+                  location.pathname === '/jenkins'
+                    ? (isDarkMode 
+                        ? 'bg-gray-700 text-white' 
+                        : 'bg-gray-200 text-gray-800')
+                    : (isDarkMode 
+                        ? 'hover:bg-gray-700 text-gray-300' 
+                        : 'hover:bg-gray-100 text-gray-600')
+                }`}
+              >
+                <Server size={16} />
+                <span>Jenkins</span>
+              </Link>
+            </div>
+          </div>
+          
+          
         </nav>
-      </aside>
+    
 
 
       {/* Main Content */}
@@ -643,6 +655,7 @@ function AddClusterModal({ onClose, darkMode }) {
 }
 
 
+// Export the components
 export { 
   NavItem, 
   SystemCard, 
