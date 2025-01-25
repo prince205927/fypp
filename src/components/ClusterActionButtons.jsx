@@ -3,11 +3,14 @@ import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
 
-export const ClusterActionButtons = ({ 
-  clusterName, 
-  automaticScaling, 
-  fetchAvailableVMs, 
-  fetchClusterDetails 
+const BASE_URL = 'http://127.0.0.1:8000';
+
+
+export const ClusterActionButtons = ({
+  clusterName,
+  automaticScaling,
+  fetchAvailableVMs,
+  fetchClusterDetails
 }) => {
   const [isManualNodeModalOpen, setIsManualNodeModalOpen] = useState(false);
   const [isAutomaticScalingEnabled, setIsAutomaticScalingEnabled] = useState(false);
@@ -25,7 +28,7 @@ export const ClusterActionButtons = ({
       
       const newScalingState = !isAutomaticScalingEnabled;
       
-      const response = await axios.post('/api/scaling/toggle', {
+      const response = await axios.post(`${BASE_URL}/api/scaling/toggle`, {
         clusterName,
         enabled: newScalingState
       });
@@ -56,7 +59,7 @@ export const ClusterActionButtons = ({
       setIsLoading(prev => ({ ...prev, automaticScaling: true }));
 
 
-      const response = await axios.post('/api/scale/automatic', {
+      const response = await axios.post(`${BASE_URL}/api/scale/automatic`, {
         clusterName,
         master_ip: automaticScaling.masterIp,
         username_master: automaticScaling.masterUsername,
@@ -94,7 +97,7 @@ export const ClusterActionButtons = ({
       }
 
 
-      const response = await axios.post('/api/add-node', {
+      const response = await axios.post(`${BASE_URL}/api/add-node`, {
         clusterName,
         target_ip_master: formData.masterIp,
         username_master: formData.masterUsername,
@@ -234,7 +237,6 @@ export const ClusterActionButtons = ({
               className="w-full border p-2 rounded"
             />
           </div>
-          
 
 
           <div className="flex justify-end space-x-2">
@@ -257,8 +259,6 @@ export const ClusterActionButtons = ({
   };
 
 
-
-
   return (
     <div className="relative w-full h-12"> {/* Fixed height container */}
       <div className="absolute right-[24px] bottom-[-80px] flex items-center z-10">
@@ -274,7 +274,9 @@ export const ClusterActionButtons = ({
 
           {/* Toggle Button */}
           <div className="flex items-center">
-            <span className="mr-2">{isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}</span>
+            <span className="mr-2">
+              {isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}
+            </span>
             <button
               onClick={handleToggle}
               className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 ${
