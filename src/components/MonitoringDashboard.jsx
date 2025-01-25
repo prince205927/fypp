@@ -1,75 +1,179 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom';
 import { 
   Settings, 
   Server, 
-  Bell, 
   User, 
   Grid, 
-  ChevronDown,
-  Plus,
-  X
-} from 'lucide-react'
+  Plus, 
+  X, 
+  Moon, 
+  Sun ,
+  Trash2
+} from 'lucide-react';
+import { toast } from 'react-toastify';
 import { 
   useGetClustersQuery, 
   useAddClusterMutation,
-} from '../features/clusters/clusterApi'
+  useDeleteClusterMutation,
+  useGetClusterDetailsQuery
+} from '../features/clusters/clusterApi';
+import ClusterCardWithDetails from './ClusterCardWithDetails';
+
 
 export default function MonitoringDashboard() {
+  const navigate = useNavigate();
   const { 
     data: clusters = [], 
-    isLoading, 
-    error 
-  } = useGetClustersQuery()
+    isLoading 
+  } = useGetClustersQuery();
+  
 
 
-  // State for managing the modal
-  const [isAddClusterModalOpen, setIsAddClusterModalOpen] = useState(false)
+ 
+
+
+
+
+  const [deleteCluster] = useDeleteClusterMutation();
+  const [isAddClusterModalOpen, setIsAddClusterModalOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+
+  // Effect to handle dark mode
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDarkMode);
+  }, [isDarkMode]);
+
+  const handleDeleteCluster = async (clusterName) => {
+    
+    try {
+        // Validate clusterName before deletion
+        if (!clusterName || typeof clusterName !== 'string') {
+            toast.error('Invalid cluster selected');
+            return;
+        }
+
+
+        const confirmDelete = window.confirm(`Are you sure you want to delete the cluster '${clusterName}'?`);
+        
+        if (confirmDelete) {
+            await deleteCluster(clusterName).unwrap();
+            // Success toast is handled in the mutation
+        }
+    } catch (error) {
+        console.error('Delete cluster error:', error);
+        
+        // More specific error handling
+        if (error.status === 404) {
+            toast.error(`Cluster '${clusterName}' not found`);
+        } else {
+            toast.error('Failed to delete cluster');
+        }
+    }
+};
+ 
+
+  
+
+  // Toggle dark mode
+  const toggleDarkMode = () => {
+    setIsDarkMode(!isDarkMode);
+  };
+
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+        <span className="ml-4">Loading Available Clusters...</span>
+      </div>
+    );
+  }
 
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className={`flex h-screen ${isDarkMode ? 'dark bg-gray-900 text-white' : 'bg-gray-50'}`}>
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 p-4">
-      <div className="flex items-center gap-2 mb-8">
-          <div className="h-6 w-6 bg-purple-600 rounded transform rotate-45" />
-          <h1 className="text-xl font-semibold">Cluster Monitor</h1>
+      <aside className={`w-64 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-r p-4`}>
+        <div className="flex items-center gap-2 mb-8">
+          <h1 className={`text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+            Cluster Monitor
+          </h1>
         </div>
         
         <nav className="space-y-1">
-          <NavItem icon={<Grid size={20} />} label="Overview" href="/dashboard" active={true} />
-          <NavItem icon={<Server size={20} />} label="Jenkins" href="/jenkins" />
-          <NavItem icon={<Bell size={20} />} label="Scaling" href="/scaling" />
-          <NavItem icon={<User size={20} />} label="Account" href="/account" />
-          <NavItem icon={<Settings size={20} />} label="Settings" href="/settings" />
+          <NavItem 
+            icon={<Grid size={20} />} 
+            label="Overview" 
+            href="/dashboard" 
+            active={true} 
+            darkMode={isDarkMode} 
+          />
+          <NavItem 
+            icon={<Server size={20} />} 
+            label="Jenkins" 
+            href="/jenkins" 
+            darkMode={isDarkMode} 
+          />
+          <NavItem 
+            icon={<User  size={20} />} 
+            label="Account" 
+            href="/account" 
+            darkMode={isDarkMode} 
+          />
+          <NavItem 
+            icon={<Settings size={20} />} 
+            label="Settings" 
+            href="/settings" 
+            darkMode={isDarkMode} 
+          />
         </nav>
       </aside>
 
 
       {/* Main Content */}
-      <main className="flex-1 p-8 relative">
+      <main className={`flex-1 p-8 relative ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gray-50'}`}>
         <div className="flex justify-between items-center mb-8">
-          <h2 className="text-2xl font-bold">System Monitoring</h2>
-          <button 
-            onClick={() => setIsAddClusterModalOpen(true)}
-            className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition"
-          >
-            <Plus size={20} />
-            Add New Cluster
-          </button>
+          <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+            System Monitoring
+          </h2>
+          
+          <div className="flex items-center">
+            <button 
+              onClick={toggleDarkMode} 
+              className={`p-2 rounded-full ${isDarkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}
+            >
+              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+
+
+            <button 
+              onClick={() => setIsAddClusterModalOpen(true)}
+              className={`ml-4 flex items-center gap-2 px-4 py-2 rounded-lg 
+                ${isDarkMode 
+                  ? 'bg-purple-700 text-white hover:bg-purple-600' 
+                  : 'bg-purple-600 text-white hover:bg-purple-700'
+                } transition`}
+            >
+              <Plus size={20} />
+              Add New Cluster
+            </button>
+          </div>
         </div>
 
 
-        {/* Existing clusters grid */}
+        {/* Clusters Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {clusters.map((system) => (
-            <Link 
-              key={system.id} 
-              to={`/dashboard/clusters/${system.id}`}
-              className="no-underline"
-            >
-              <SystemCard {...system} />
-            </Link>
+          {clusters.map((cluster) => (
+            <ClusterCardWithDetails 
+              key={cluster.id}
+              cluster={cluster}
+              onDelete={handleDeleteCluster}
+              darkMode={isDarkMode}
+              navigate={navigate}
+            />
           ))}
         </div>
 
@@ -78,6 +182,7 @@ export default function MonitoringDashboard() {
         {isAddClusterModalOpen && (
           <AddClusterModal 
             onClose={() => setIsAddClusterModalOpen(false)} 
+            darkMode={isDarkMode}
           />
         )}
       </main>
@@ -86,21 +191,239 @@ export default function MonitoringDashboard() {
 }
 
 
-function AddClusterModal({ onClose }) {
-  const [addCluster, { isLoading, error }] = useAddClusterMutation()
-  
-  // Form state
+// NavItem Component
+function NavItem({ icon, label, href, active = false, darkMode }) {
+  return (
+    <Link 
+      to={href}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer no-underline ${
+        darkMode 
+          ? (active 
+              ? 'bg-purple-900 text-purple-300' 
+              : 'text-gray-300 hover:bg-gray-800') 
+          : (active 
+              ? 'bg-purple-50 text-purple-600' 
+              : 'text-gray-600 hover:bg-gray-50')
+      }`}
+    >
+      {icon}
+      <span className="text-sm font-medium">{label}</span>
+    </Link>
+  )
+}
+
+
+// SystemCard Component
+function SystemCard({ 
+  id,  // Use id for navigation
+  name, 
+  status, 
+  details,
+  cpu, 
+  memory, 
+  isLoading: isDetailsLoading,
+  nodes, 
+  pods, 
+  image, 
+  onDelete, 
+  darkMode,
+  navigate  // Add navigate prop
+}) {
+  const [deleteCluster] = useDeleteClusterMutation();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const handleCardClick = () => {
+    // Navigate to cluster details when card is clicked
+    navigate(`/dashboard/clusters/${id}`);
+  };
+  const handleDeleteClick = async (e) => {
+    // Stop event propagation to prevent card navigation
+    e.stopPropagation();
+    
+    try {
+      // Validate cluster name
+      if (!name || typeof name !== 'string') {
+        toast.error('Invalid cluster selected');
+        return;
+      }
+
+
+      // Confirm deletion
+      const confirmDelete = window.confirm(`Are you sure you want to delete the cluster '${name}'?`);
+      
+      if (confirmDelete) {
+        setIsDeleting(true);
+
+
+        // Use the RTK Query mutation
+        await deleteCluster(name).unwrap();
+        
+        // Note: Success toast is handled in the mutation
+      }
+    } catch (error) {
+      // Error handling is now primarily in the mutation
+      console.error('Delete attempt failed', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Operational': return darkMode ? 'text-green-400' : 'text-green-600'
+      case 'Maintenance': return darkMode ? 'text-yellow-400' : 'text-yellow-600'
+      case 'Offline': return darkMode ? 'text-red-400' : 'text-red-600'
+      default: return darkMode ? 'text-gray-400' : 'text-gray-600'
+    }
+  }
+  const LoadingMetric = () => (
+    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-8"></div>
+  );
+
+  return (
+   <div>
+    <div 
+      className={`
+        border rounded-lg p-6 
+        ${darkMode 
+          ? 'bg-gray-800 border-gray-700' 
+          : 'bg-white border-gray-200'
+        } 
+        hover:shadow-md transition-shadow
+        cursor-pointer  // Make the entire card clickable
+      `}
+      onClick={handleCardClick}
+    >
+      <div className="mb-4 flex justify-between items-start">
+        <div>
+          <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+            {name.includes('System') ? name : `Cluster: ${name}`}
+          </h3>
+          <div className={`text-sm font-medium ${getStatusColor(status)}`}>
+            Status: {status}
+          </div>
+        </div>
+       {/* Trash Icon Button */}
+       <button 
+          onClick={handleDeleteClick}
+          className={`
+            p-2 rounded-full hover:bg-red-100 transition-colors
+            ${darkMode 
+              ? 'text-red-400 hover:bg-red-900' 
+              : 'text-red-500 hover:bg-red-50'
+            }
+          `}
+          aria-label="Delete Cluster"
+        >
+          <Trash2 
+            size={20} 
+            className={`
+              ${darkMode 
+                ? 'hover:text-red-300' 
+                : 'hover:text-red-600'
+              }
+            `}
+          />
+        </button>
+      </div>
+ 
+        
+   
+
+
+      <div className="space-y-3 mb-4">
+        <MetricRow 
+          label="CPU" 
+          value={
+            isDetailsLoading ? (
+              <LoadingMetric />
+            ) : (
+              `${cpu}%`
+            )
+        
+          } 
+          darkMode={darkMode} 
+        />
+        <MetricRow 
+  label="Memory" 
+  value={
+    isDetailsLoading ? (
+      <LoadingMetric />
+    ) : (
+      `${memory}%`
+    )
+  } 
+  darkMode={darkMode} 
+/>
+       <MetricRow 
+          label="Nodes" 
+          value={
+            isDetailsLoading ? (
+              <LoadingMetric />
+            ) : (
+              <div className="flex items-center">
+                <span>{details?.nodes?.length || 0}</span>
+                
+              </div>
+            )
+          } 
+          darkMode={darkMode} 
+        />
+         <MetricRow 
+          label="Pods" 
+          value={
+            isDetailsLoading ? (
+              <LoadingMetric />
+            ) : (
+              <div className="flex items-center">
+                <span>{details?.pods?.length || 0}</span>
+                
+              </div>
+            )
+          } 
+          darkMode={darkMode} 
+        />
+        {image && (
+          <MetricRow 
+            label="Image" 
+            value={image} 
+            darkMode={darkMode} 
+          />
+        )}
+      </div>
+    </div>
+    </div>
+  )
+}
+
+// MetricRow Component
+function MetricRow({ label, value, darkMode }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+        {label}
+      </span>
+      <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+
+// AddClusterModal Component
+function AddClusterModal({ onClose, darkMode }) {
+  const [addCluster,{ isLoading, error }] = useAddClusterMutation()
   const [clusterData, setClusterData] = useState({
     name: '',
     ip: '',
     port: 22,
     username: '',
     password: '',
-    interval: 30 // default interval
+    interval: 30
   })
 
 
-  // Handle input changes
   const handleChange = (e) => {
     const { name, value } = e.target
     setClusterData(prev => ({
@@ -110,39 +433,53 @@ function AddClusterModal({ onClose }) {
   }
 
 
-  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
       await addCluster(clusterData).unwrap()
-      onClose() // Close modal on success
-    } catch (submitError) {
-      console.error('Failed to add cluster:', submitError)
-      // Error handling will be managed by the mutation
+      toast.success('Cluster added successfully')
+      onClose()
+    } catch (error) {
+      console.error('Failed to add cluster:', error)
+      toast.error('Failed to add cluster')
     }
   }
 
 
   return (
-    
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative">
-        {/* Close button */}
-        <button 
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
-        >
-          <X size={24} />
-        </button>
-
-
-        <h2 className="text-xl font-semibold mb-4">Add New Cluster</h2>
+    <div className={`
+      fixed inset-0 bg-black bg-opacity-50 
+      flex items-center justify-center z-50
+    `}>
+      <div className={`
+        rounded-lg shadow-xl w-full max-w-md p-6 
+        ${darkMode 
+          ? 'bg-gray-800 text-white' 
+          : 'bg-white text-gray-800'
+        }
+      `}>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-semibold">Add New Cluster</h2>
+          <button 
+            onClick={onClose}
+            className={`
+              ${darkMode 
+                ? 'text-gray-300 hover:text-white' 
+                : 'text-gray-600 hover:text-gray-800'
+              }
+            `}
+          >
+            <X size={24} />
+          </button>
+        </div>
 
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+            <label 
+              htmlFor="name" 
+              className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
+            >
               Cluster Name
             </label>
             <input
@@ -152,14 +489,23 @@ function AddClusterModal({ onClose }) {
               required
               value={clusterData.name}
               onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3"
+              className={`
+                mt-1 block w-full rounded-md shadow-sm py-2 px-3
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'border-gray-300'
+                }
+              `}
               placeholder="Enter cluster name"
             />
           </div>
 
 
           <div>
-            <label htmlFor="ip" className="block text-sm font-medium text-gray-700">
+            <label 
+              htmlFor="ip" 
+              className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
+            >
               Master Node IP
             </label>
             <input
@@ -169,14 +515,23 @@ function AddClusterModal({ onClose }) {
               required
               value={clusterData.ip}
               onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3"
+              className={`
+                mt-1 block w-full rounded-md shadow-sm py-2 px-3
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'border-gray-300'
+                }
+              `}
               placeholder="Enter master node IP"
             />
           </div>
 
 
           <div>
-            <label htmlFor="port" className="block text-sm font-medium text-gray-700">
+            <label 
+              htmlFor="port" 
+              className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
+            >
               SSH Port
             </label>
             <input
@@ -186,14 +541,23 @@ function AddClusterModal({ onClose }) {
               required
               value={clusterData.port}
               onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3"
+              className={`
+                mt-1 block w-full rounded-md shadow-sm py-2 px-3
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'border-gray-300'
+                }
+              `}
               placeholder="Enter SSH port (default: 22)"
             />
           </div>
 
 
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+            <label 
+              htmlFor="username" 
+              className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
+            >
               Username
             </label>
             <input
@@ -203,14 +567,23 @@ function AddClusterModal({ onClose }) {
               required
               value={clusterData.username}
               onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3"
+              className={`
+                mt-1 block w-full rounded-md shadow-sm py-2 px-3
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'border-gray-300'
+                }
+              `}
               placeholder="Enter SSH username"
             />
           </div>
 
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+            <label 
+              htmlFor="password" 
+              className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
+            >
               Password
             </label>
             <input
@@ -220,7 +593,13 @@ function AddClusterModal({ onClose }) {
               required
               value={clusterData.password}
               onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3"
+              className={`
+                mt-1 block w-full rounded-md shadow-sm py-2 px-3
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'border-gray-300'
+                }
+              `}
               placeholder="Enter SSH password"
             />
           </div>
@@ -228,28 +607,33 @@ function AddClusterModal({ onClose }) {
 
 
 
-          {/* Error handling */}
-          {error && (
-            <div className="text-red-500 text-sm">
-              {error.data?.detail || 'Failed to add cluster'}
-            </div>
-          )}
-
-
-          <div className="flex justify-end space-x-3">
+          <div className="flex justify-end space-x-3 mt-6">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+              className={`
+                px-4 py-2 rounded-md
+                ${darkMode 
+                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }
+              `}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading}
-              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+              className={`
+                px-4 py-2 rounded-md
+                ${darkMode 
+                  ? 'bg-purple-700 text-white hover:bg-purple-600' 
+                  : 'bg-purple-600 text-white hover:bg-purple-700'
+                }
+                ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
+              `}
             >
-              {isLoading ? "Adding..." : "Add Cluster"}
+              {isLoading ? 'Adding...' : 'Add Cluster'}
             </button>
           </div>
         </form>
@@ -257,60 +641,13 @@ function AddClusterModal({ onClose }) {
     </div>
   )
 }
-function NavItem({ icon, label, href, active = false }) {
-  return (
-    <Link 
-      to={href}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer no-underline ${
-        active ? 'bg-purple-50 text-purple-600' : 'text-gray-600 hover:bg-gray-50'
-      }`}
-    >
-      {icon}
-      <span className="text-sm font-medium">{label}</span>
-    </Link>
-  )
-}
-
-function SystemCard({ name, status, cpu, memory, nodes, pods, image }) {
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'Operational': return 'text-green-600'
-      case 'Maintenance': return 'text-yellow-600'
-      case 'Offline': return 'text-red-600'
-      default: return 'text-gray-600'
-    }
-  }
 
 
-  return (
-    <div className="border rounded-lg p-6 hover:shadow-md transition-shadow cursor-pointer">
-      <div className="mb-4">
-        <h3 className="text-lg font-medium">
-          {name.includes('System') ? name : `Cluster Name: ${name}`}
-        </h3>
-        <div className={`text-sm font-medium ${getStatusColor(status)}`}>
-          Status: {status}
-        </div>
-      </div>
-
-
-      <div className="space-y-3">
-        <MetricRow label="CPU" value={`${cpu}%`} />
-        <MetricRow label="Memory" value={`${memory}%`} />
-        <MetricRow label="No of Nodes" value={nodes.toString()} />
-        <MetricRow label="No of Pods" value={pods.toString()} />
-        {image && <MetricRow label="Image used" value={image} />}
-      </div>
-    </div>
-  )
+export { 
+  NavItem, 
+  SystemCard, 
+  MetricRow, 
+  AddClusterModal 
 }
 
 
-function MetricRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-sm text-gray-600">{label}</span>
-      <span className="text-sm font-medium">{value}</span>
-    </div>
-  )
-}

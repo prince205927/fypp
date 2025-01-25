@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import threading
 import asyncio
 import paramiko
-from datetime import datetime
+from datetime import datetime, time
 import sqlite3
 from fastapi import File, UploadFile, Form
 import uuid
@@ -32,12 +32,22 @@ import requests
 from typing import Dict, Optional, Any
 from fastapi import HTTPException, Query
 from pydantic import BaseModel, validator
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+from typing import Optional
+from fastapi import FastAPI, Path
+from typing import Union
+
 jenkins_router = APIRouter()
+scaling_router = APIRouter()
 
 DB_POOL_SIZE = 5
 db_pool = queue.Queue(maxsize=DB_POOL_SIZE)
 
 
+app = FastAPI()
 
 # Initialize the connection pool
 def init_db_pool():
@@ -496,31 +506,189 @@ async def dashboard(request: Request):
         "cluster_count": cluster_count
     })
 
+# @app.get("/get_cluster_metrics")
+# async def get_cluster_metrics(cluster_name: str, node_name: str):
+#     try:
+#         conn = sqlite3.connect('cluster.db')
+#         c = conn.cursor()
+
+#         # Fetch the latest 100 metrics for the specified node and cluster
+#         c.execute('''
+#             SELECT timestamp, cpu_percent, memory_percent
+#             FROM cluster_stats
+#             WHERE cluster_name = ? AND node_name = ?
+#             ORDER BY timestamp DESC
+#             LIMIT 100
+#         ''', (cluster_name, node_name))
+        
+#         rows = c.fetchall()
+#         if not rows:
+#             return {"error": "No data found for the specified node and cluster."}
+        
+#         # Reverse data for chronological order
+#         timestamps = [row[0] for row in rows][::-1]
+#         cpu_metrics = [row[1].replace('%', '') for row in rows][::-1]  # Stripping the '%' symbol
+#         memory_metrics = [row[2].replace('%', '') for row in rows][::-1]  # Stripping the '%' symbol
+        
+#         conn.close()
+
+#         return {
+#             "timestamps": timestamps,
+#             "cpu_metrics": cpu_metrics,
+#             "memory_metrics": memory_metrics
+#         }
+
+#     except Exception as e:
+#         return {"error": str(e)}
 @app.get("/get_cluster_metrics")
-async def get_cluster_metrics(cluster_name: str, node_name: str):
+async def get_cluster_metrics(
+    cluster_name: str, 
+    node_name: str, 
+    time_range: str = Query(default='latest', enum=['latest', '1h', '6h', '12h', '24h', '7d'])
+):
     try:
         conn = sqlite3.connect('cluster.db')
         c = conn.cursor()
 
-        # Fetch the latest 100 metrics for the specified node and cluster
-        c.execute('''
+
+        # Base query
+        query = '''
             SELECT timestamp, cpu_percent, memory_percent
             FROM cluster_stats
             WHERE cluster_name = ? AND node_name = ?
-            ORDER BY timestamp DESC
-            LIMIT 100
-        ''', (cluster_name, node_name))
+        '''
         
+        # Get current time
+        current_time = datetime.now()
+
+
+        # Determine sampling strategy
+        if time_range == 'latest':
+            # Last 30 minutes
+            time_window = current_time - timedelta(minutes=30)
+            query += ' AND timestamp >= ? ORDER BY timestamp DESC LIMIT 60'
+            params = (cluster_name, node_name, time_window)
+        
+        elif time_range == '1h':
+            # Last 60 minutes
+            time_window = current_time - timedelta(hours=1)
+            query += ' AND timestamp >= ? ORDER BY timestamp'
+            params = (cluster_name, node_name, time_window)
+        
+        elif time_range == '6h':
+            # Sample every 5 minutes for 6 hours
+            time_window = current_time - timedelta(hours=6)
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM cluster_stats
+                    WHERE cluster_name = ? AND node_name = ?
+                    AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 5 = 0
+                ORDER BY timestamp
+            '''
+            params = (cluster_name, node_name, time_window)
+        
+        elif time_range == '12h':
+            # Sample every 10 minutes for 12 hours
+            time_window = current_time - timedelta(hours=12)
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM cluster_stats
+                    WHERE cluster_name = ? AND node_name = ?
+                    AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 10 = 0
+                ORDER BY timestamp
+            '''
+            params = (cluster_name, node_name, time_window)
+        
+        elif time_range == '24h':
+            # Sample every 15 minutes for 24 hours
+            time_window = current_time - timedelta(hours=24)
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM cluster_stats
+                    WHERE cluster_name = ? AND node_name = ?
+                    AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 15 = 0
+                ORDER BY timestamp
+            '''
+            params = (cluster_name, node_name, time_window)
+        
+        elif time_range == '7d':
+            # Sample every hour for 7 days
+            time_window = current_time - timedelta(days=7)
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM cluster_stats
+                    WHERE cluster_name = ? AND node_name = ?
+                    AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 60 = 0
+                ORDER BY timestamp
+            '''
+            params = (cluster_name, node_name, time_window)
+
+
+        # Execute the query
+        c.execute(query, params)
         rows = c.fetchall()
+
+
+        # Process results
         if not rows:
-            return {"error": "No data found for the specified node and cluster."}
-        
-        # Reverse data for chronological order
-        timestamps = [row[0] for row in rows][::-1]
-        cpu_metrics = [row[1].replace('%', '') for row in rows][::-1]  # Stripping the '%' symbol
-        memory_metrics = [row[2].replace('%', '') for row in rows][::-1]  # Stripping the '%' symbol
-        
+            return {
+                "timestamps": [],
+                "cpu_metrics": [],
+                "memory_metrics": [],
+                "error": "No data found for the specified time range."
+            }
+
+
+        # Extract and process data
+        timestamps = []
+        cpu_metrics = []
+        memory_metrics = []
+
+
+        for row in rows:
+            timestamps.append(row[0])
+            cpu_metrics.append(row[1].replace('%', '') if isinstance(row[1], str) else row[1])
+            memory_metrics.append(row[2].replace('%', '') if isinstance(row[2], str) else row[2])
+
+
         conn.close()
+
 
         return {
             "timestamps": timestamps,
@@ -528,9 +696,14 @@ async def get_cluster_metrics(cluster_name: str, node_name: str):
             "memory_metrics": memory_metrics
         }
 
-    except Exception as e:
-        return {"error": str(e)}
 
+    except Exception as e:
+        return {
+            "timestamps": [],
+            "cpu_metrics": [],
+            "memory_metrics": [],
+            "error": str(e)
+        }
 @app.get("/cluster/{cluster_name}")
 async def get_cluster_stats(request: Request, cluster_name: str):
     try:
@@ -732,7 +905,104 @@ async def get_cluster_stats(request: Request, cluster_name: str):
     except Exception as e:
         print(f"Error in get_cluster_stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
+@app.get("/api/cluster/{cluster_name}/services")
+async def get_cluster_services(cluster_name: str):
+    try:
+        # Establish database connection and fetch cluster details
+        conn = sqlite3.connect('cluster.db')
+        c = conn.cursor()
+        
+        # Fetch cluster details using the cluster_name
+        c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
+        cluster = c.fetchone()
+        
+        if not cluster:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Cluster '{cluster_name}' not found"
+            )
+        
+        cluster_ip, port, username, password = cluster
+        
+        # Use Paramiko to execute kubectl command via SSH
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        try:
+            ssh.connect(
+                hostname=cluster_ip, 
+                username=username, 
+                password=password,
+                port=port  # Use the port from the database
+            )
+            
+            # Execute standard kubectl get services command
+            stdin, stdout, stderr = ssh.exec_command(
+                "kubectl get services"
+            )
+            
+            # Capture any potential errors
+            error_output = stderr.read().decode('utf-8').strip()
+            if error_output:
+                raise Exception(f"kubectl error: {error_output}")
+            
+            # Read and parse the output
+            services_output = stdout.read().decode('utf-8').strip().split('\n')
+            
+            # Parse services (skip header)
+            services = []
+            for line in services_output[1:]:
+                # Split the line, handling potential whitespace variations
+                parts = line.split()
+                
+                # Ensure we have enough parts to create a service
+                if len(parts) >= 5:
+                    service_name = parts[0]
+                    service_type = parts[1]
+                    service_cluster_ip = parts[2]
+                    ports = parts[4]  # PORT(S) column
+                    
+                    # Process ports based on service type
+                    if service_type == "ClusterIP":
+                        # For ClusterIP, use the first port
+                        service_port = ports.split('/')[0] if '/' in ports else ports
+                    elif service_type == "NodePort":
+                        # For NodePort, extract the port after the colon
+                        if ':' in ports:
+                            service_port = ports.split(':')[1].split('/')[0]
+                        else:
+                            service_port = ports.split('/')[0]
+                    else:
+                        service_port = None
+                    
+                    service = {
+                        'name': service_name,
+                        'type': service_type,
+                        'clusterIP': service_cluster_ip,
+                        'ports': service_port
+                    }
+                    services.append(service)
+            
+            return {
+                'cluster_ip': cluster_ip,  # The IP of the cluster itself
+                'services': services
+            }
+        
+        except paramiko.AuthenticationException:
+            raise HTTPException(status_code=403, detail="Authentication failed")
+        except paramiko.SSHException as ssh_exception:
+            raise HTTPException(status_code=500, detail=f"SSH connection error: {str(ssh_exception)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching services: {str(e)}")
+        finally:
+            ssh.close()
+    
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 @app.post("/add_cluster")
 async def add_cluster(cluster: ClusterCredentials):
     global clusters
@@ -1273,35 +1543,299 @@ async def get_deployments_data(cluster_name: str):
         return JSONResponse(content={
             "error": f"An unexpected error occurred: {str(e)}"
         }, status_code=500)
+from fastapi import HTTPException
+from pydantic import conint
+
+
+@app.post("/delete_cluster/{cluster_name}")
+async def delete_cluster(cluster_name: str):
+    try:
+        # Connect to the database
+        conn = sqlite3.connect('cluster.db')
+        cursor = conn.cursor()
+
+        # Check if the cluster exists
+        cursor.execute("SELECT * FROM clusters WHERE name = ?", (cluster_name,))
+        cluster = cursor.fetchone()
+
+        if not cluster:
+            raise HTTPException(status_code=404, detail=f"Cluster '{cluster_name}' not found")
+
+        # Delete associated records
+        cursor.execute("DELETE FROM cluster_stats WHERE cluster_name = ?", (cluster_name,))
+        cursor.execute("DELETE FROM pods WHERE cluster_name = ?", (cluster_name,))
+        cursor.execute("DELETE FROM clusters WHERE name = ?", (cluster_name,))
+
+        # Commit the changes
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": f"Cluster '{cluster_name}' deleted successfully",
+            "cluster_name": cluster_name
+        }
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+    finally:
+        if conn:
+            conn.close()
+# @app.get("/get_pod_metrics")
+# async def get_pod_metrics(pod_name: str):  # Changed from 'pod' to 'pod_name'
+#     try:
+#         conn = sqlite3.connect('cluster.db')
+#         c = conn.cursor()
+#         c.execute("""
+#             SELECT timestamp, cpu_percent, memory_percent 
+#             FROM pod_stats 
+#             WHERE pod_name = ? 
+#             ORDER BY timestamp DESC 
+#             LIMIT 100
+#         """, (pod_name,))
+#         results = c.fetchall()
+#         conn.close()
+
+
+#         timestamps = [row[0] for row in results][::-1]
+#         cpu_metrics = [float(row[1]) for row in results][::-1]
+#         memory_metrics = [float(row[2]) for row in results][::-1]
+
+
+#         return {
+#             "timestamps": timestamps,
+#             "cpu_metrics": cpu_metrics,
+#             "memory_metrics": memory_metrics
+#         }
+#     except Exception as e:
+#         print(f"Error fetching pod metrics: {str(e)}")
+#         return {"error": "An error occurred while fetching pod metrics."}
+from datetime import datetime, timedelta
+from typing import Optional
+from fastapi import Query, HTTPException
+import sqlite3
+
 
 @app.get("/get_pod_metrics")
-async def get_pod_metrics(pod: str):
+async def get_pod_metrics(
+    pod_name: str, 
+    time_range: str = Query(default='latest', enum=['latest', '1h', '6h', '12h', '24h', '7d']),
+    cluster_name: Optional[str] = None
+):
     try:
         conn = sqlite3.connect('cluster.db')
         c = conn.cursor()
-        c.execute("""
-            SELECT timestamp, cpu_percent, memory_percent 
-            FROM pod_stats 
-            WHERE pod_name = ? 
-            ORDER BY timestamp DESC 
-            LIMIT 100
-        """, (pod,))
-        results = c.fetchall()
+
+
+        # If cluster_name is not provided, try to find it
+        if not cluster_name:
+            c.execute("""
+                SELECT cluster_name FROM pods 
+                WHERE pod_name = ?
+            """, (pod_name,))
+            
+            cluster_result = c.fetchone()
+            
+            if not cluster_result:
+                return {
+                    "timestamps": [],
+                    "cpu_metrics": [],
+                    "memory_metrics": [],
+                    "error": f"No cluster found for pod {pod_name}"
+                }
+            
+            cluster_name = cluster_result[0]
+
+
+        # Get current time
+        current_time = datetime.now()
+
+
+        # Determine time window and sampling strategy
+        if time_range == 'latest':
+            time_window = (current_time - timedelta(minutes=30)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM pod_stats
+                WHERE pod_name = ? AND timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT 60
+            '''
+            params = (pod_name, time_window)
+        
+        elif time_range == '1h':
+            time_window = (current_time - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM pod_stats
+                WHERE pod_name = ? AND timestamp >= ?
+                ORDER BY timestamp
+            '''
+            params = (pod_name, time_window)
+        
+        elif time_range == '6h':
+            time_window = (current_time - timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM pod_stats
+                    WHERE pod_name = ? AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 5 = 0
+                ORDER BY timestamp
+            '''
+            params = (pod_name, time_window)
+        
+        elif time_range == '12h':
+            time_window = (current_time - timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM pod_stats
+                    WHERE pod_name = ? AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 10 = 0
+                ORDER BY timestamp
+            '''
+            params = (pod_name, time_window)
+        
+        elif time_range == '24h':
+            time_window = (current_time - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM pod_stats
+                    WHERE pod_name = ? AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 15 = 0
+                ORDER BY timestamp
+            '''
+            params = (pod_name, time_window)
+        
+        elif time_range == '7d':
+            time_window = (current_time - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            query = '''
+                WITH RankedMetrics AS (
+                    SELECT 
+                        timestamp, 
+                        cpu_percent, 
+                        memory_percent,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as row_num
+                    FROM pod_stats
+                    WHERE pod_name = ? AND timestamp >= ?
+                )
+                SELECT timestamp, cpu_percent, memory_percent
+                FROM RankedMetrics
+                WHERE row_num % 60 = 0
+                ORDER BY timestamp
+            '''
+            params = (pod_name, time_window)
+        
+        else:
+            return {
+                "timestamps": [],
+                "cpu_metrics": [],
+                "memory_metrics": [],
+                "error": "Invalid time range"
+            }
+
+
+        # Execute the query
+        c.execute(query, params)
+        rows = c.fetchall()
+
+
+        # Process results
+        if not rows:
+            return {
+                "timestamps": [],
+                "cpu_metrics": [],
+                "memory_metrics": [],
+                "error": "No data found for the specified time range."
+            }
+
+
+        # Extract and process data
+        timestamps = []
+        cpu_metrics = []
+        memory_metrics = []
+
+
+        for row in rows:
+            timestamps.append(row[0])
+            cpu_metrics.append(row[1].replace('%', '') if isinstance(row[1], str) else row[1])
+            memory_metrics.append(row[2].replace('%', '') if isinstance(row[2], str) else row[2])
+
+
         conn.close()
 
-        timestamps = [row[0] for row in results][::-1]
-        cpu_metrics = [float(row[1]) for row in results][::-1]
-        memory_metrics = [float(row[2]) for row in results][::-1]
 
         return {
             "timestamps": timestamps,
             "cpu_metrics": cpu_metrics,
-            "memory_metrics": memory_metrics
+            "memory_metrics": memory_metrics,
+            "cluster_name": cluster_name
         }
-    except Exception as e:
-        print(f"Error fetching pod metrics: {str(e)}")
-        return {"error": "An error occurred while fetching pod metrics."}
 
+
+    except Exception as e:
+        return {
+            "timestamps": [],
+            "cpu_metrics": [],
+            "memory_metrics": [],
+            "error": str(e)
+        }
+    finally:
+        conn.close()
+# Function to add a new VM resource to the database
+def add_vm_resource(vm_name, ip_address, status='registered', power_state='off'):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO vm_resources (vm_name, ip_address, status, power_state)
+            VALUES (?, ?, ?, ?)
+        """, (vm_name, ip_address, status, power_state))
+        conn.commit()
+
+
+# Function to unregister a VM resource from the database
+def unregister_vm_resource(vm_name):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM vm_resources WHERE vm_name = ?
+        """, (vm_name,))
+        conn.commit()
+
+
+# Function to update the status of a VM resource
+def update_vm_resource_status(vm_name, status):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE vm_resources SET status = ? WHERE vm_name = ?
+        """, (status, vm_name))
+        conn.commit()
 def insert_pod_metrics(pod_name: str, timestamp: str, cpu_usage: str, memory_usage: str):
     try:
         conn = sqlite3.connect('cluster.db')
@@ -1460,6 +1994,8 @@ async def update_replicas(
         raise HTTPException(status_code=500, detail=str(e))   
 
 
+    
+# Run the FastAPI application
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

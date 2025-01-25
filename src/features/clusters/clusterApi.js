@@ -1,5 +1,5 @@
 import { baseApi } from "../../services/api";
-
+import { toast } from 'react-toastify';
 
 export const clusterApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
@@ -36,15 +36,109 @@ body: clusterData,
 invalidatesTags: ["Clusters"],
 }),
 
+  
+
     getClusterMetrics: builder.query({
-      query: ({ clusterName, nodeName }) => ({
-        url: "get_cluster_metrics",
-        params: { cluster_name: clusterName, node_name: nodeName },
+      query: ({ clusterName, nodeName, timeRange = 'latest' }) => ({
+        url: 'get_cluster_metrics',
+        params: {
+          cluster_name: clusterName,
+          node_name: nodeName,
+          time_range: timeRange
+        }
       }),
-      providesTags: (result, error, { clusterName, nodeName }) => [
-        { type: "ClusterStats", id: `${clusterName}-${nodeName}` },
-      ],
+      transformResponse: (response) => {
+        // Handle potential error responses
+        if (response.error) {
+          console.warn(response.error);
+          return {
+            timestamps: [],
+            cpu_metrics: [],
+            memory_metrics: []
+          };
+        }
+        return response;
+      }
     }),
+
+  getPodMetrics: builder.query({
+    query: ({ clusterName, podName, timeRange = 'latest' }) => ({
+        url: 'get_pod_metrics', 
+        params: { 
+            cluster_name: clusterName,
+            pod_name: podName,
+            time_range: timeRange
+        },
+    }),
+    providesTags: (result, error, { clusterName, podName, timeRange }) => [
+        { type: 'PodMetrics', id: `${clusterName}-${podName}-${timeRange}` },
+    ],
+}),
+getClusterServices: builder.query({
+  query: ({ clusterName }) => ({
+      url: `api/cluster/${clusterName}/services`,
+      method: 'GET'
+  }),
+  providesTags: (result, error, { clusterName }) => [
+      { type: 'ClusterServices', id: clusterName }
+  ],
+}),
+  deleteCluster: builder.mutation({
+    query: (clusterName) => {
+        // Ensure clusterName is a string and not empty
+        if (!clusterName || typeof clusterName !== 'string') {
+            throw new Error('Invalid cluster name');
+        }
+
+
+        return {
+            url: `delete_cluster/${encodeURIComponent(clusterName)}`,
+            method: 'POST', // Change from DELETE to POST
+            // If your backend expects a specific content type
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        }
+    },
+    invalidatesTags: ['Clusters'],
+    
+    async onQueryStarted(clusterName, { dispatch, queryFulfilled }) {
+        try {
+            const response = await queryFulfilled;
+            
+        
+            if (response.data.status === 'success') {
+                toast.success(`Cluster '${clusterName}' deleted successfully`);
+            } else {
+                toast.error('Unexpected response from server');
+            }
+        } catch (error) {
+            console.error('Delete cluster error:', error);
+            
+
+            if (error.error) {
+                const { status, data } = error.error;
+                
+                switch (status) {
+                    case 404:
+                        toast.error(`Cluster '${clusterName}' not found`);
+                        break;
+                    case 405:
+                        toast.error('Method Not Allowed. Please contact support.');
+                        break;
+                    case 500:
+                        toast.error('Internal server error. Please try again later.');
+                        break;
+                    default:
+                        toast.error(data?.detail || 'Failed to delete cluster');
+                }
+            } else {
+                toast.error('An unexpected error occurred');
+            }
+        }
+    }
+}),
+
 
     getClusterDetails: builder.query({
       query: (clusterName) => ({
@@ -120,7 +214,7 @@ invalidatesTags: ["Clusters"],
           // Optimistically update the local cache
           const patchResult = dispatch(
             clusterApi.util.updateQueryData('getClusterDetails', data.clusterName, (draft) => {
-              // Find and update the specific deployment's replicas
+        
               const imageToUpdate = draft.parsedImages.find(
                 img => img.deployment === data.deploymentName
               );
@@ -131,10 +225,10 @@ invalidatesTags: ["Clusters"],
             })
           );
 
-          // Wait for the actual mutation to complete
+        
           await queryFulfilled;
         } catch {
-          // If mutation fails, revert the optimistic update
+       
           patchResult.undo();
         }
       }
@@ -157,7 +251,7 @@ invalidatesTags: ["Clusters"],
         formData.append('file', file, file.name);
 
         return {
-          url: 'http://127.0.0.1:8000/upload_deployment',
+          url: 'http://:800127.0.0.10/upload_deployment',
           method: 'POST',
           body: formData,
 
@@ -224,9 +318,9 @@ invalidatesTags: ["Clusters"],
           method: 'POST',
           body: formData,
           
-          // Optional: Custom headers if needed
+    
           headers: {
-            // You can add custom headers here if required
+           
           },
     
     
@@ -272,7 +366,7 @@ invalidatesTags: ["Clusters"],
       // Enhanced error transformation
       transformErrorResponse: (response, meta, arg) => {
         // Comprehensive error logging
-        console.group('❌ Image Update Error');
+        console.group(' Image Update Error');
         console.error('Error Response:', response);
         console.log('Error Metadata:', meta);
         console.log('Error Arguments:', arg);
@@ -354,6 +448,8 @@ invalidatesTags: ["Clusters"],
 });
 
 export const {
+  useDeleteClusterMutation,
+  useGetClusterServicesQuery,
   useUpdateImageMutation,
   useUpdateReplicasMutation,
   useGetDeploymentsDataQuery,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Server,
   Box,
@@ -6,12 +6,11 @@ import {
   Terminal,
   Activity,
   Server as ServerIcon,
-  Edit2, 
-  RefreshCw, 
-  Upload
+  Edit2,
+  RefreshCw,
+  NetworkIcon,
+  Upload,
 } from "lucide-react";
-
-
 import {
   LineChart,
   Line,
@@ -30,22 +29,118 @@ import {
 import { useParams } from "react-router-dom";
 import {
   useGetClusterDetailsQuery,
-  useOpenTerminalMutation
+  useGetPodMetricsQuery,
+  useOpenTerminalMutation,
+  useGetClusterServicesQuery
 } from "../features/clusters/clusterApi";
 import { NodeMetrics } from "./NodeMetrics";
 import { toast } from "react-toastify";
 import { ImagesSection } from "./ImagesSection";
+import { PodMetrics } from "./PodMetrics";
 
 
+// Colors for charts
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
 
 
+// Modal for manual node addition
+const ManualNodeModal = ({ isOpen, onClose, onSubmit }) => {
+  const [formData, setFormData] = useState({
+    masterIp: '',
+    masterUsername: '',
+    masterPassword: '',
+    masterPort: '22',
+    workerIp: '',
+    workerUsername: '',
+    workerPassword: '',
+    workerPort: '22'
+  });
+
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+  };
+
+
+  const handleSubmit = (e) => {
+    e.preventDefault(); // Prevent default form submission behavior
+    onSubmit(formData);
+    onClose(); // Close modal after submission
+};
+
+
+  return (
+    isOpen && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+        <div className="bg-white rounded-lg p-6 w-11/12 max-w-4xl">
+          <h2 className="text-xl font-bold mb-4">Manual Node Addition</h2>
+          <div>
+          
+            <input
+              type="text"
+              name="workerIp"
+              placeholder="Worker IP"
+              value={formData.workerIp}
+              onChange={handleChange}
+              className="block w-full mb-2 border border-gray-300 rounded-md p-2"
+            />
+            <input
+              type="text"
+              name="workerUsername"
+              placeholder="Worker Username"
+              value={formData.workerUsername}
+              onChange={handleChange}
+              className="block w-full mb-2 border border-gray-300 rounded-md p-2"
+            />
+            <input
+              type="password"
+              name="workerPassword"
+              placeholder="Worker Password"
+              value={formData.workerPassword}
+              onChange={handleChange}
+              className="block w-full mb-2 border border-gray-300 rounded-md p-2"
+            />
+            <input
+              type="text"
+              name="workerPort"
+              placeholder="Worker Port"
+              value={formData.workerPort}
+              onChange={handleChange}
+              className="block w-full mb-2 border border-gray-300 rounded-md p-2"
+            />
+          </div>
+          <div className="flex justify-between mt-4">
+            <button
+            type="submit"
+              onClick={handleSubmit}
+              className="bg-blue-500 text-white px-4 py-2 rounded"
+            >
+              Add Node
+            </button>
+            <button
+            type="button"
+              onClick={onClose}
+              className="bg-gray-300 text-black px-4 py-2 rounded"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  );
+};
+
+
+// Main ClusterDetails component
 export default function ClusterDetails() {
   const { clusterName } = useParams();
   const [selectedNodeCharts, setSelectedNodeCharts] = useState({});
   const [selectedPodCharts, setSelectedPodCharts] = useState({});
   const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
   const [terminalUrl, setTerminalUrl] = useState("");
+  const [isManualNodeModalOpen, setIsManualNodeModalOpen] = useState(false);
 
 
   const [openTerminal] = useOpenTerminalMutation();
@@ -64,7 +159,7 @@ export default function ClusterDetails() {
   // Log cluster details for debugging
   useEffect(() => {
     if (clusterDetails) {
-      console.log('Cluster Details:', clusterDetails);
+      console.log("Cluster Details:", clusterDetails);
     }
   }, [clusterDetails]);
 
@@ -79,6 +174,9 @@ export default function ClusterDetails() {
       toast.error("Failed to open terminal. Please try again.");
     }
   };
+
+
+
 
 
   const TerminalModal = () => (
@@ -155,8 +253,6 @@ export default function ClusterDetails() {
             }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-
-
             <XAxis
               dataKey="timestamp"
               angle={-45}
@@ -168,8 +264,6 @@ export default function ClusterDetails() {
                 fill: "#666",
               }}
             />
-
-
             <YAxis
               label={{
                 value: "Usage (%)",
@@ -178,8 +272,6 @@ export default function ClusterDetails() {
               }}
               domain={[0, "dataMax + 10"]}
             />
-
-
             <Tooltip
               content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
@@ -201,11 +293,7 @@ export default function ClusterDetails() {
                 return null;
               }}
             />
-
-
             <Legend verticalAlign="top" height={36} />
-
-
             <Line
               type="monotone"
               dataKey="cpu"
@@ -221,8 +309,6 @@ export default function ClusterDetails() {
               }}
               name="CPU Usage"
             />
-
-
             <Line
               type="monotone"
               dataKey="memory"
@@ -246,6 +332,14 @@ export default function ClusterDetails() {
 
 
   const renderOverviewSection = () => {
+    if (isLoading) {
+      return (
+        <div className="flex justify-center items-center h-screen">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+          <span className="ml-4">Loading Cluster Details...</span>
+        </div>
+      );
+    }
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <div className="bg-white shadow-lg rounded-lg p-6">
@@ -272,9 +366,7 @@ export default function ClusterDetails() {
 
 
         <div className="border border-blue-200 rounded-xl shadow-lg overflow-hidden transition-all duration-300 transform">
-          <div className="p-6 flex
-```jsx
-          justify-between items-center mb-4">
+          <div className="p-6 flex justify-between items-center mb-4">
             <div className="flex items-center space-x-4">
               <div className="bg-blue-500 text-white rounded-full p-3 shadow-md">
                 <Terminal className="h-6 w-6" />
@@ -316,64 +408,163 @@ export default function ClusterDetails() {
   };
 
 
-
-
   const renderPodsSection = () => {
     if (!clusterDetails?.pods || clusterDetails.pods.length === 0) return null;
 
 
     return (
-      <div className="bg-white shadow-lg rounded-lg p-6 mt-6">
+        <div className="bg-white shadow-lg rounded-lg p-6 mt-6">
+            <h2 className="text-2xl font-semibold mb-4 flex items-center">
+                <Box className="mr-3" /> Pod Details
+            </h2>
+            <table className="w-full border-collapse">
+                <thead className="bg-gray-100">
+                    <tr>
+                        <th className="border p-3 text-left">Pod Name</th>
+                        <th className="border p-3 text-left">Namespace</th>
+                        <th className="border p-3 text-left">Image</th>
+                        <th className="border p-3 text-left">Node</th>
+                        <th className="border p-3 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {clusterDetails.pods.map((pod, index) => (
+                        <React.Fragment key={index}>
+                            <tr className="hover:bg-gray-50">
+                                <td className="border p-3">{pod.name}</td>
+                                <td className="border p-3">{pod.namespace}</td>
+                                <td className="border p-3">{pod.image}</td>
+                                <td className="border p-3">{pod.node}</td>
+                                <td className="border p-3">
+                                    <button
+                                        onClick={() => togglePodChart(pod.name)}
+                                        className="text-blue-600 hover:text-blue-800"
+                                    >
+                                        {selectedPodCharts[pod.name] ? "Hide Chart" : "Show Chart"}
+                                    </button>
+                                </td>
+                            </tr>
+                            {selectedPodCharts[pod.name] && (
+                                <tr>
+                                    <td colSpan="5" className="p-4">
+                                        <PodMetrics
+                                            podName={pod.name}
+                                            clusterDetails={clusterDetails} // Pass clusterDetails here
+                                            isVisible={selectedPodCharts[pod.name]}
+                                        />
+                                    </td>
+                                </tr>
+                            )}
+                        </React.Fragment>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+const renderServicesSection = () => {
+  const { 
+    data: servicesData, 
+    isLoading, 
+    error 
+  } = useGetClusterServicesQuery({ clusterName });
+
+
+  // Process services with service links
+  const processedServices = useMemo(() => {
+    if (!servicesData) return [];
+
+
+    return servicesData.services.map(service => ({
+      ...service,
+      serviceLink: service.type !== 'ClusterIP' && service.ports
+        ? `http://${servicesData.cluster_ip}:${service.ports}` // Use the port directly
+        : null
+    }));
+  }, [servicesData]);
+
+
+  if (isLoading) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
         <h2 className="text-2xl font-semibold mb-4 flex items-center">
-          <Box className="mr-3" /> Pod Details
+          <NetworkIcon className="mr-3" /> Services
         </h2>
-        <table className="w-full border-collapse">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="border p-3 text-left">Pod Name</th>
-              <th className="border p-3 text-left">Namespace</th>
-              <th className="border p-3 text-left">Image</th>
-              <th className="border p-3 text-left">Node</th>
-              <th className="border p-3 text-left">Container</th>
-              <th className="border p-3 text-left">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clusterDetails.pods.map((pod, index) => (
-              <React.Fragment key={index}>
-                <tr className="hover:bg-gray-50">
-                  <td className="border p-3">{pod.name}</td>
-                  <td className="border p-3">{pod.namespace}</td>
-                  <td className="border p-3">{pod.image}</td>
-                  <td className="border p-3">{pod.node}</td>
-                  <td className="border p-3">{pod.container}</td>
-                  <td className="border p-3">
-                    <button
-                      onClick={() => togglePodChart(pod.name)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      {selectedPodCharts[pod.name] ? "Hide Chart" : "Show Chart"}
-                    </button>
-                  </td>
-                </tr>
-                {selectedPodCharts[pod.name] && (
-                  <tr>
-                    <td colSpan="6" className="p-4">
-                      {renderMetricsChart(pod.name)}
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
+        <div className="flex justify-center items-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-4 border-blue-500"></div>
+        </div>
       </div>
     );
-  };
+  }
 
 
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+        <h2 className="text-2xl font-semibold mb-4 flex items-center">
+          <NetworkIcon className="mr-3" /> Services
+        </h2>
+        <p className="text-red-500">Error loading services: {error.message}</p>
+      </div>
+    );
+  }
 
 
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+      <h2 className="text-2xl font-semibold mb-4 flex items-center">
+        <NetworkIcon className="mr-3" /> Services
+      </h2>
+      <table className="w-full border-collapse">
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="border p-3 text-left">Name</th>
+            <th className="border p-3 text-left">Type</th>
+            <th className="border p-3 text-left">Cluster IP</th>
+            <th className="border p-3 text-left">Ports</th>
+            <th className="border p-3 text-left">Service Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          {processedServices.length === 0 ? (
+            <tr>
+              <td colSpan="5" className="border p-3 text-center text-gray-500">
+                No services found
+              </td>
+            </tr>
+          ) : (
+            processedServices.map((service, index) => (
+              <tr 
+                key={index} 
+                className="hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                <td className="border p-3">{service.name}</td>
+                <td className="border p-3">{service.type}</td>
+                <td className="border p-3">{service.clusterIP}</td>
+                <td className="border p-3">{service.ports || 'N/A'}</td>
+                <td className="border p-3">
+                  {service.serviceLink ? (
+                    <a 
+                      href={service.serviceLink} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
+                    >
+                      Access Service
+                    </a>
+                  ) : (
+                    'N/A'
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+};
   const renderNodeMetrics = () => {
     if (!clusterDetails?.nodes || clusterDetails.nodes.length === 0) return null;
 
@@ -389,7 +580,7 @@ export default function ClusterDetails() {
               <th className="border p-3 text-left">Node Name</th>
               <th className="border p-3 text-left">Status</th>
               <th className="border p-3 text-left">Roles</th>
-              <th className="border p-3 text-left">Visualization</th>
+              <th className="border p-3 text-left">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -400,85 +591,90 @@ export default function ClusterDetails() {
                   <td className="border p-3">{node.status}</td>
                   <td className="border p-3">{node.roles}</td>
                   <td className="border p-3">
-                  <button
-                    onClick={() => toggleNodeChart(node.name)}
-                    className="text-blue-600 hover:text-blue-800"
-                  >
-                    {selectedNodeCharts[node.name] ? "Hide Chart" : "Show Chart"}
-                  </button>
-                </td>
-              </tr>
-              {selectedNodeCharts[node.name] && (
-                <tr>
-                  <td colSpan="4" className="p-4">
-                    <NodeMetrics
-                      nodeName={node.name}
-                      clusterName={clusterName}
-                      isVisible={selectedNodeCharts[node.name]}
-                    />
+                    <button
+                      onClick={() => toggleNodeChart(node.name)}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      {selectedNodeCharts[node.name] ? "Hide Chart" : "Show Chart"}
+                    </button>
                   </td>
                 </tr>
-              )}
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
+                {selectedNodeCharts[node.name] && (
+                  <tr>
+                    <td colSpan="4" className="p-4">
+                      <NodeMetrics
+                        nodeName={node.name}
+                        clusterName={clusterName}
+                        isVisible={selectedNodeCharts[node.name]}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
 
+  const renderResourceCharts = () => {
+    if (!clusterDetails) return null;
 
 
-const renderResourceCharts = () => {
-  if (!clusterDetails) return null;
+    // Node Distribution
+    const nodeDistributionData = clusterDetails.nodes.map((node) => ({
+      name: node.name,
+      pods: clusterDetails.pods.filter((pod) => pod.node === node.name).length,
+    }));
 
 
-  // Node Distribution
-  const nodeDistributionData = clusterDetails.nodes.map((node) => ({
-    name: node.name,
-    pods: clusterDetails.pods.filter((pod) => pod.node === node.name).length,
-  }));
+    // Image Distribution
+    const imageDistributionData = clusterDetails.pods.reduce((acc, pod) => {
+      const existingImage = acc.find(item => item.name === pod.image);
+      if (existingImage) {
+        existingImage.count += 1;
+      } else {
+        acc.push({ name: pod.image, count: 1 });
+      }
+      return acc;
+    }, []);
 
 
-  // Image Distribution
-  const imageDistributionData = clusterDetails.pods.reduce((acc, pod) => {
-    const existingImage = acc.find(item => item.name === pod.image);
-    if (existingImage) {
-      existingImage.count += 1;
-    } else {
-      acc.push({ name: pod.image, count: 1 });
+    // Overall Resource Composition
+    const totalResources = clusterDetails.pods.length + clusterDetails.nodes.length + imageDistributionData.length;
+
+
+    const resourceCompositionData = [
+      {
+        name: "Pods",
+        value: clusterDetails.pods.length,
+        percentage: ((clusterDetails.pods.length / totalResources) * 100).toFixed(2)
+      },
+      {
+        name: "Nodes",
+        value: clusterDetails.nodes.length,
+        percentage: ((clusterDetails.nodes.length / totalResources) * 100).toFixed(2)
+      },
+      {
+        name: "Images",
+        value: imageDistributionData.length,
+        percentage: ((imageDistributionData.length / totalResources) * 100).toFixed(2)
+      }
+    ];
+
+    if (isLoading) {
+      return (
+        <div className="flex justify-center items-center h-screen">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+          <span className="ml-4">Loading Cluster Details...</span>
+        </div>
+      );
     }
-    return acc;
-  }, []);
-
-
-  // Overall Resource Composition
-  const totalResources = clusterDetails.pods.length + clusterDetails.nodes.length + imageDistributionData.length;
-
-
-  const resourceCompositionData = [
-    {
-      name: "Pods",
-      value: clusterDetails.pods.length,
-      percentage: ((clusterDetails.pods.length / totalResources) * 100).toFixed(2)
-    },
-    {
-      name: "Nodes",
-      value: clusterDetails.nodes.length,
-      percentage: ((clusterDetails.nodes.length / totalResources) * 100).toFixed(2)
-    },
-    {
-      name: "Images",
-      value: imageDistributionData.length,
-      percentage: ((imageDistributionData.length / totalResources) * 100).toFixed(2)
-    }
-  ];
-
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-      <div className="bg-white shadow-lg rounded-lg p-6">
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+        <div className="bg-white shadow-lg rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4">Node Distribution</h2>
         <ResponsiveContainer width="100%" height={300}>
           <PieChart>
@@ -493,10 +689,7 @@ const renderResourceCharts = () => {
               nameKey="name"
             >
               {nodeDistributionData.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={COLORS[index % COLORS.length]}
-                />
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
             <Tooltip
@@ -515,6 +708,8 @@ const renderResourceCharts = () => {
           </PieChart>
         </ResponsiveContainer>
       </div>
+
+              
 
 
       <div className="bg-white shadow-lg rounded-lg p-6">
@@ -539,15 +734,14 @@ const renderResourceCharts = () => {
             />
             <Bar dataKey="count" fill="#8884d8">
               {imageDistributionData.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={COLORS[index % COLORS.length]}
-                />
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+
 
 
       <div className="bg-white shadow-lg rounded-lg p-6">
@@ -597,69 +791,89 @@ const renderResourceCharts = () => {
   );
 };
 
-
-
-
-if (!clusterName) {
-  return <ErrorComponent message="No cluster name provided" />;
-}
-
-
-
-
-if (isLoading) {
+const renderActions = () => {
   return (
-    <div className="flex justify-center items-center h-screen">
-      <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
-      <span className="ml-4">Loading Cluster Details...</span>
+    <div className="relative w-full h-12"> {/* Fixed height container */}
+      <div className="absolute right-[24px]  bottom-[-80px] flex items-center z-10">
+        <div className="flex space-x-4">
+          <button
+            onClick={() => setIsManualNodeModalOpen(true)}
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 shadow-md transition-colors"
+          >
+            Manual Node Addition
+          </button>
+          <button
+            onClick={handleAutomaticScaling}
+            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 shadow-md transition-colors"
+          >
+            Automatic Node Addition
+          </button>
+        </div>
+      </div>
     </div>
   );
-}
+};
 
 
+const handleAutomaticScaling = async () => {
+  try {
+      const response = await axios.post('/api/scale/automatic', {
+          master_ip: automaticScaling.masterIp,
+          username_master: automaticScaling.masterUsername,
+          password_master: automaticScaling.masterPassword,
+          port_master: automaticScaling.masterPort
+      });
+      toast.success(response.data.message);
+  } catch (error) {
+      toast.error(`Automatic scaling failed: ${error.response?.data?.detail || 'Unknown error'}`);
+  }
+};
 
-
-if (error) {
-  return (
-    <ErrorComponent
-      message={error.message || "Failed to load cluster details"}
-    />
-  );
-}
-
-
-
-
-if (!clusterDetails) {
-  return <ErrorComponent message="No cluster details available" />;
-}
-
-
-
+const handleManualNodeAdd = async (formData) => {
+  try {
+      const response = await axios.post('/api/add-node', {
+          target_ip_master: formData.masterIp,
+          username_master: formData.masterUsername,
+          password_master: formData.masterPassword,
+          port_master: formData.masterPort,
+          target_ip_worker: formData.workerIp,
+          username_worker: formData.workerUsername,
+          password_worker: formData.workerPassword,
+          port_worker: formData.workerPort
+      });
+      toast.success(response.data.message);
+      fetchAvailableVMs(); // Refresh the available VMs after adding
+  } catch (error) {
+      toast.error(`Failed to add node: ${error.response?.data?.detail || 'Unknown error'}`);
+  }
+};
+// Render the main component
 
 return (
   <div className="p-6 space-y-6">
-    {isTerminalModalOpen && <TerminalModal />}
-    {renderOverviewSection()}
-    {renderResourceCharts()}
-    {renderNodeMetrics()}
-    {renderPodsSection()}
-    {clusterDetails && (
-      <ImagesSection 
-        clusterDetails={clusterDetails} 
-        clusterName={clusterName} 
-      />
-    )}
+       {/* Add the action buttons here */}
+       {isTerminalModalOpen && <TerminalModal />}
+      {renderOverviewSection()}
+      {renderResourceCharts()}
+      {renderActions()}
+      {renderNodeMetrics()}
+      
+      {renderPodsSection()}
+      {clusterDetails && (
+          <ImagesSection 
+              clusterDetails={clusterDetails} 
+              clusterName={clusterName} 
+          />
+      )}
+      {isManualNodeModalOpen && (
+          <ManualNodeModal
+              isOpen={isManualNodeModalOpen}
+              onClose={() => setIsManualNodeModalOpen(false)}
+              onSubmit={handleManualNodeAdd} 
+          />
+      )}
+      {renderServicesSection()}
   </div>
 );
 }
 
-
-
-
-const ErrorComponent = ({ message }) => (
-  <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-    <strong className="font-bold">Error: </strong>
-    <span className="block sm:inline">{message}</span>
-  </div>
-);
