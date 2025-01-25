@@ -86,7 +86,6 @@ export const ClusterActionButtons = ({
 
       // Validate form data
       const requiredFields = [
-        'masterIp', 'masterUsername', 'masterPassword', 'masterPort',
         'workerIp', 'workerUsername', 'workerPassword', 'workerPort'
       ];
       
@@ -99,10 +98,6 @@ export const ClusterActionButtons = ({
 
       const response = await axios.post(`${BASE_URL}/api/add-node`, {
         clusterName,
-        target_ip_master: formData.masterIp,
-        username_master: formData.masterUsername,
-        password_master: formData.masterPassword,
-        port_master: formData.masterPort,
         target_ip_worker: formData.workerIp,
         username_worker: formData.workerUsername,
         password_worker: formData.workerPassword,
@@ -130,10 +125,6 @@ export const ClusterActionButtons = ({
     onSubmit 
   }) => {
     const [formData, setFormData] = useState({
-      masterIp: '',
-      masterUsername: '',
-      masterPassword: '',
-      masterPort: '',
       workerIp: '',
       workerUsername: '',
       workerPassword: '',
@@ -163,42 +154,7 @@ export const ClusterActionButtons = ({
         <div className="bg-white p-6 rounded-lg w-96">
           <h2 className="text-xl font-bold mb-4">Add Manual Node</h2>
           
-          {/* Master Node Fields */}
-          <div className="mb-4">
-            <h3 className="font-semibold mb-2">Master Node</h3>
-            <input
-              type="text"
-              name="masterIp"
-              placeholder="Master IP"
-              value={formData.masterIp}
-              onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
-            />
-            <input
-              type="text"
-              name="masterUsername"
-              placeholder="Username"
-              value={formData.masterUsername}
-              onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
-            />
-            <input
-              type="password"
-              name="masterPassword"
-              placeholder="Password"
-              value={formData.masterPassword}
-              onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
-            />
-            <input
-              type="text"
-              name="masterPort"
-              placeholder="Port"
-              value={formData.masterPort}
-              onChange={handleInputChange}
-              className="w-full border p-2 rounded"
-            />
-          </div>
+          
 
 
           {/* Worker Node Fields */}
