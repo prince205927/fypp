@@ -6,78 +6,15 @@ import { toast } from 'react-hot-toast';
 const BASE_URL = 'http://127.0.0.1:8000';
 
 
-export const ClusterActionButtons = ({
-  clusterName,
-  automaticScaling,
-  fetchAvailableVMs,
-  fetchClusterDetails
-}) => {
+export const ClusterActionButtons = ({ clusterName }) => {
   const [isManualNodeModalOpen, setIsManualNodeModalOpen] = useState(false);
   const [isAutomaticScalingEnabled, setIsAutomaticScalingEnabled] = useState(false);
   const [isLoading, setIsLoading] = useState({
     manualNodeAdd: false,
-    automaticScaling: false,
-    scalingToggle: false
+    automaticScaling: false
   });
 
 
-  // Automatic Scaling Toggle Handler
-  const handleToggle = async () => {
-    try {
-      setIsLoading(prev => ({ ...prev, scalingToggle: true }));
-      
-      const newScalingState = !isAutomaticScalingEnabled;
-      
-      const response = await axios.post(`${BASE_URL}/api/scaling/toggle`, {
-        clusterName,
-        enabled: newScalingState
-      });
-
-
-      setIsAutomaticScalingEnabled(newScalingState);
-      toast.success(response.data.message || `Automatic scaling ${newScalingState ? 'enabled' : 'disabled'}`);
-    } catch (error) {
-      toast.error(`Failed to toggle scaling: ${error.response?.data?.detail || 'Unknown error'}`);
-      // Revert the state if API call fails
-      setIsAutomaticScalingEnabled(isAutomaticScalingEnabled);
-    } finally {
-      setIsLoading(prev => ({ ...prev, scalingToggle: false }));
-    }
-  };
-
-
-  // Automatic Node Addition Handler
-  const handleAutomaticScaling = async () => {
-    try {
-      // Validate that automatic scaling is enabled
-      if (!isAutomaticScalingEnabled) {
-        toast.error('Please enable automatic scaling first');
-        return;
-      }
-
-
-      setIsLoading(prev => ({ ...prev, automaticScaling: true }));
-
-
-      const response = await axios.post(`${BASE_URL}/api/scale/automatic`, {
-        clusterName,
-        master_ip: automaticScaling.masterIp,
-        username_master: automaticScaling.masterUsername,
-        password_master: automaticScaling.masterPassword,
-        port_master: automaticScaling.masterPort
-      });
-
-
-      toast.success(response.data.message);
-      // Optionally refresh node list or cluster details
-      fetchClusterDetails();
-    } catch (error) {
-      toast.error(`Automatic scaling failed: ${error.response?.data?.detail || 'Unknown error'}`);
-    } finally {
-      setIsLoading(prev => ({ ...prev, automaticScaling: false }));
-    }
-  };
-  
   // Manual Node Addition Handler
   const handleManualNodeAdd = async (formData) => {
     try {
@@ -85,10 +22,7 @@ export const ClusterActionButtons = ({
 
 
       // Validate form data
-      const requiredFields = [
-        'workerIp', 'workerUsername', 'workerPassword', 'workerPort'
-      ];
-      
+      const requiredFields = ['ip', 'username', 'password', 'port'];
       const missingFields = requiredFields.filter(field => !formData[field]);
       if (missingFields.length > 0) {
         toast.error(`Please fill in all required fields: ${missingFields.join(', ')}`);
@@ -96,19 +30,16 @@ export const ClusterActionButtons = ({
       }
 
 
-      const response = await axios.post(`${BASE_URL}/api/add-node`, {
-        clusterName,
-        target_ip_worker: formData.workerIp,
-        username_worker: formData.workerUsername,
-        password_worker: formData.workerPassword,
-        port_worker: formData.workerPort
+      const response = await axios.post(`${BASE_URL}/manual_add_node/`, {
+        cluster_name: clusterName,
+        ip: formData.ip,
+        username: formData.username,
+        password: formData.password,
+        port: formData.port
       });
 
 
-      toast.success(response.data.message);
-      fetchAvailableVMs(); // Refresh the available VMs after adding
-      
-      // Close the manual node modal
+      toast.success(response.data.message || 'Node added successfully');
       setIsManualNodeModalOpen(false);
     } catch (error) {
       toast.error(`Failed to add node: ${error.response?.data?.detail || 'Unknown error'}`);
@@ -117,18 +48,51 @@ export const ClusterActionButtons = ({
     }
   };
 
+// Automatic Scaling Toggle Handler
+const handleToggle = async () => {
+    try {
+      setIsLoading(prev => ({ ...prev, scalingToggle: true }));
+      
+      const newScalingState = !isAutomaticScalingEnabled;
+      
+      const response = await axios.post(`${BASE_URL}/toggle_scaling/${clusterName}`, {
+        enabled: newScalingState
+      });
+  
+  
+      setIsAutomaticScalingEnabled(newScalingState);
+      toast.success(`Automatic scaling ${newScalingState ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      toast.error(`Failed to toggle scaling: ${error.response?.data?.detail || 'Unknown error'}`);
+    } finally {
+      setIsLoading(prev => ({ ...prev, scalingToggle: false }));
+    }
+  };
+  // Automatic Node Addition Handler
+  const handleAutomaticScaling = async () => {
+    try {
+      setIsLoading(prev => ({ ...prev, automaticScaling: true }));
+
+
+      const response = await axios.post(`${BASE_URL}/scale_node/${clusterName}`);
+
+
+      toast.success(response.data.message || 'Nodes scaled successfully');
+    } catch (error) {
+      toast.error(`Automatic scaling failed: ${error.response?.data?.detail || 'Unknown error'}`);
+    } finally {
+      setIsLoading(prev => ({ ...prev, automaticScaling: false }));
+    }
+  };
+
 
   // Manual Node Modal Component
-  const ManualNodeModal = ({ 
-    isOpen, 
-    onClose, 
-    onSubmit 
-  }) => {
+  const ManualNodeModal = ({ isOpen, onClose, onSubmit }) => {
     const [formData, setFormData] = useState({
-      workerIp: '',
-      workerUsername: '',
-      workerPassword: '',
-      workerPort: ''
+      ip: '',
+      username: '',
+      password: '',
+      port: '22'
     });
 
 
@@ -150,52 +114,44 @@ export const ClusterActionButtons = ({
 
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
         <div className="bg-white p-6 rounded-lg w-96">
           <h2 className="text-xl font-bold mb-4">Add Manual Node</h2>
-          
-          
-
-
-          {/* Worker Node Fields */}
-          <div className="mb-4">
-            <h3 className="font-semibold mb-2">Worker Node</h3>
+          <div className="space-y-4">
             <input
               type="text"
-              name="workerIp"
-              placeholder="Worker IP"
-              value={formData.workerIp}
+              name="ip"
+              placeholder="Node IP"
+              value={formData.ip}
               onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
+              className="w-full border p-2 rounded"
             />
             <input
               type="text"
-              name="workerUsername"
+              name="username"
               placeholder="Username"
-              value={formData.workerUsername}
+              value={formData.username}
               onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
+              className="w-full border p-2 rounded"
             />
             <input
               type="password"
-              name="workerPassword"
+              name="password"
               placeholder="Password"
-              value={formData.workerPassword}
+              value={formData.password}
               onChange={handleInputChange}
-              className="w-full border p-2 mb-2 rounded"
+              className="w-full border p-2 rounded"
             />
             <input
               type="text"
-              name="workerPort"
+              name="port"
               placeholder="Port"
-              value={formData.workerPort}
+              value={formData.port}
               onChange={handleInputChange}
               className="w-full border p-2 rounded"
             />
           </div>
-
-
-          <div className="flex justify-end space-x-2">
+          <div className="flex justify-end space-x-2 mt-4">
             <button 
               onClick={onClose}
               className="bg-gray-200 text-gray-700 px-4 py-2 rounded"
@@ -204,7 +160,7 @@ export const ClusterActionButtons = ({
             </button>
             <button 
               onClick={handleSubmit}
-              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 shadow-md transition-colors"
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             >
               Add Node
             </button>
@@ -216,48 +172,45 @@ export const ClusterActionButtons = ({
 
 
   return (
-    <div className="relative w-full h-12"> {/* Fixed height container */}
-      <div className="absolute right-[24px] bottom-[-80px] flex items-center z-10">
-        <div className="flex space-x-4">
-          {/* Manual Node Addition Button */}
-          <button
-            onClick={() => setIsManualNodeModalOpen(true)}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 shadow-md transition-colors"
-          >
-            Manual Node Addition
-          </button>
+    <div className="relative w-full">
+      <div className="flex justify-end items-center space-x-4 mb-4">
+        {/* Manual Node Addition Button */}
+        <button
+          onClick={() => setIsManualNodeModalOpen(true)}
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 shadow-md transition-colors"
+        >
+          Manual Node Addition
+        </button>
 
 
-          {/* Toggle Button */}
-          <div className="flex items-center">
-            <span className="mr-2">
-              {isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}
-            </span>
-            <button
-              onClick={handleToggle}
-              className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 ${
-                isAutomaticScalingEnabled ? 'bg-green-500' : 'bg-gray-200'
-              }`}
-            >
-              <span
-                className={`transform transition-transform duration-200 absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow ${
-                  isAutomaticScalingEnabled ? 'translate-x-5' : ''
-                }`}
-              />
-            </button>
-          </div>
-
-
-          {/* Automatic Node Addition Button */}
-          <button
-            onClick={handleAutomaticScaling}
-            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 shadow-md transition-colors"
-            disabled={!isAutomaticScalingEnabled || isLoading.automaticScaling}
-          >
-            {isLoading.automaticScaling ? 'Adding Nodes...' : 'Automatic Node Addition'}
-          </button>
-        </div>
+        {/* Automatic Node Addition Button */}
+        <button
+          onClick={handleAutomaticScaling}
+          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 shadow-md transition-colors"
+          disabled={isLoading.automaticScaling}
+        >
+          {isLoading.automaticScaling ? 'Adding Nodes...' : 'Automatic Node Addition'}
+        </button>
       </div>
+      {/* Toggle Button */}
+<div className="flex items-center">
+  <span className="mr-2">
+    {isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}
+  </span>
+  <button
+    onClick={handleToggle}
+    disabled={isLoading.scalingToggle}
+    className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 ${
+      isAutomaticScalingEnabled ? 'bg-green-500' : 'bg-gray-200'
+    } ${isLoading.scalingToggle ? 'opacity-50 cursor-not-allowed' : ''}`}
+  >
+    <span
+      className={`transform transition-transform duration-200 absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow ${
+        isAutomaticScalingEnabled ? 'translate-x-5' : ''
+      }`}
+    />
+  </button>
+</div>
 
 
       {/* Manual Node Modal */}
