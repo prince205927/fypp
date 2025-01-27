@@ -128,3 +128,5 @@ function formatTimestamp(timestamp, timeRange) {
       return timestamp;
   }
 }
+
+export default NodeMetrics

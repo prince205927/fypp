@@ -3,6 +3,9 @@ import {
   useUploadDeploymentMutation,
   useUpdateImageMutation,
   useUpdateReplicasMutation,
+  useGetClusterDetailsQuery,
+  useDeleteDeploymentMutation,
+  useDeletePodMutation,
 } from "../features/clusters/clusterApi";
 import { toast } from "react-toastify";
 import {
@@ -15,16 +18,21 @@ import {
   Edit2,
   RefreshCw,
   Upload,
+  Trash2
 } from "lucide-react";
-import axios from "axios";
 
-export function ImagesSection({ clusterDetails, clusterName }) {
+
+
+
+export function ImagesSection({  clusterName }) {
   /** @type {[File | null, function]} */
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadDeployment] = useUploadDeploymentMutation();
+  
   const [updateImage] = useUpdateImageMutation();
   const [updateReplicas] = useUpdateReplicasMutation();
-
+  const { data: clusterDetails } = useGetClusterDetailsQuery(clusterName);
+  const [deleteDeployment] = useDeleteDeploymentMutation();
   const parsedImages = Array.isArray(clusterDetails.deployments)
     ? clusterDetails.deployments.map((deployment) => ({
         deployment: deployment.name,
@@ -195,6 +203,23 @@ export function ImagesSection({ clusterDetails, clusterName }) {
       toast.error(errorMessage);
     }
   };
+  const handleDeploymentDeletion = async (deploymentName) => {
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete the deployment ${deploymentName}? This action cannot be undone.`
+    );
+    
+    if (!confirmDelete) return;
+
+
+    try {
+      await deleteDeployment({ 
+        clusterName, 
+        deploymentName 
+      }).unwrap();
+    } catch (error) {
+      console.error('Deletion failed', error);
+    }
+  };
 
   const handleReplicasUpdate = async () => {
     try {
@@ -250,7 +275,7 @@ export function ImagesSection({ clusterDetails, clusterName }) {
         </div>
       </div>
 
-      {/* Images Table */}
+      {/* Images Table
       <h2 className="text-2xl font-semibold mb-4 flex items-center">
         <Database className="mr-3" /> Images
       </h2>
@@ -262,7 +287,7 @@ export function ImagesSection({ clusterDetails, clusterName }) {
             <th className="border p-3 text-left">Container</th>
             <th className="border p-3 text-left">Image</th>
             <th className="border p-3 text-left">Replicas</th>
-            <th className="border p-3 text-left">Actions</th>
+            <th className="border p-3 text-left">Image Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -304,7 +329,68 @@ export function ImagesSection({ clusterDetails, clusterName }) {
             </tr>
           )}
         </tbody>
-      </table>
+      </table> */}
+      {/* Images Table */}
+<h2 className="text-2xl font-semibold mb-4 flex items-center">
+  <Database className="mr-3" /> Images
+</h2>
+<table className="w-full border-collapse">
+  <thead className="bg-gray-100">
+    <tr>
+      <th className="border p-3 text-left">Namespace</th>
+      <th className="border p-3 text-left">Deployment</th>
+      <th className="border p-3 text-left">Container</th>
+      <th className="border p-3 text-left">Image</th>
+      <th className="border p-3 text-left">Replicas</th>
+      <th className="border p-3 text-left">Image Actions</th>
+      <th className="border p-3 text-left text-nowrap">Deployment Delete</th> {/* New Column */}
+    </tr>
+  </thead>
+  <tbody>
+    {parsedImages.length > 0 ? (
+      parsedImages.map((imageDetail, index) => (
+        <tr key={index} className="hover:bg-gray-50">
+          <td className="border p-3">{imageDetail.namespace || "N/A"}</td>
+          <td className="border p-3">{imageDetail.deployment || "N/A"}</td>
+          <td className="border p-3">{imageDetail.container || "N/A"}</td>
+          <td className="border p-3">{imageDetail.image || "N/A"}</td>
+          <td className="border p-3">
+            {imageDetail.replicas !== undefined ? imageDetail.replicas : "N/A"}
+          </td>
+          <td className="border p-3 flex space-x-2">
+            <button
+              onClick={() => openImageUpdateModal(imageDetail)}
+              className="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 flex items-center"
+            >
+              <Edit2 size={16} className="mr-1" /> Update Image
+            </button>
+            <button
+              onClick={() => openReplicasUpdateModal(imageDetail)}
+              className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600 flex items-center"
+            >
+              <RefreshCw size={16} className="mr-1" /> Update Replicas
+            </button>
+          </td>
+          <td className="border p-3">
+            <button
+              onClick={() => handleDeploymentDeletion(imageDetail.deployment)}
+              className="text-red-500 hover:text-red-700 transition-colors"
+              title="Delete Deployment"
+            >
+              <Trash2 size={20} />
+            </button>
+          </td>
+        </tr>
+      ))
+    ) : (
+      <tr>
+        <td colSpan="7" className="text-center py-4 text-gray-500">
+          No images found
+        </td>
+      </tr>
+    )}
+  </tbody>
+</table>
 
       {/* Image Update Modal */}
       {editImageModal.open && (

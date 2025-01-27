@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from fastapi import FastAPI, Path
 from typing import Union
+import time
 
 jenkins_router = APIRouter()
 scaling_router = APIRouter()
@@ -52,7 +53,7 @@ app = FastAPI()
 # Initialize the connection pool
 def init_db_pool():
     for _ in range(DB_POOL_SIZE):
-        conn = sqlite3.connect('cluster.db', timeout=30.0)
+        conn = sqlite3.connect('cluster_1.db', timeout=30.0)
         # Enable WAL mode for better concurrent access
         conn.execute('PRAGMA journal_mode=WAL')
         db_pool.put(conn)
@@ -94,7 +95,7 @@ app.add_middleware(
 )
 # Initialize the SQLite database
 def init_db():
-    conn = sqlite3.connect('cluster.db')
+    conn = sqlite3.connect('cluster_1.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS clusters
                  (name TEXT PRIMARY KEY, ip TEXT, port INTEGER, username TEXT, password TEXT, interval INTEGER)''')
@@ -127,7 +128,7 @@ class ClusterCredentials(BaseModel):
 async def collect_cluster_stats(cluster_name: str, interval: int):
     while True:
         try:
-            conn = sqlite3.connect('cluster.db')
+            conn = sqlite3.connect('cluster_1.db')
             c = conn.cursor()
             c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
             cluster = c.fetchone()
@@ -201,7 +202,7 @@ async def collect_cluster_stats(cluster_name: str, interval: int):
 async def collect_pod_stats(cluster_name: str, interval: int):
     while True:
         try:
-            conn = sqlite3.connect('cluster.db')
+            conn = sqlite3.connect('cluster_1.db')
             c = conn.cursor()
             c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
             cluster = c.fetchone()
@@ -248,7 +249,7 @@ async def set_interval(cluster_name: str = Form(...), interval: int = Form(...))
 @app.get("/list_clusters")
 async def list_clusters():
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         
         cluster_list = []
@@ -372,7 +373,57 @@ async def list_clusters():
             "total_clusters": 0
         }
 
+@app.post("/delete_pod/{cluster_name}/{pod_name}")
+async def delete_pod(cluster_name: str, pod_name: str):
+    try:
+        # Connect to the database to get cluster details
+        conn = sqlite3.connect('cluster.db')
+        cursor = conn.cursor()
 
+
+        # Fetch cluster connection details
+        cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+        cluster_details = cursor.fetchone()
+        
+        if not cluster_details:
+            raise HTTPException(status_code=404, detail="Cluster not found")
+        
+        target_ip_master, username_master, password_master, port_master = cluster_details
+        
+        # Establish SSH connection to the master node
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(
+            target_ip_master, 
+            username=username_master, 
+            password=password_master, 
+            port=port_master
+        )
+
+
+        # Execute the kubectl delete command for the pod
+        delete_command = f"kubectl delete pod {pod_name}"
+        stdin, stdout, stderr = ssh.exec_command(delete_command)
+
+
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+
+        ssh.close()
+
+
+        if error:
+            raise HTTPException(status_code=400, detail=f"Error deleting pod: {error}")
+
+
+        return {
+            "message": f"Pod {pod_name} successfully deleted."
+        }
+
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/delete_image")
@@ -383,7 +434,7 @@ async def delete_image(request: Request):
         image = data['image']
 
         # Get cluster credentials
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         
         # Get cluster credentials
@@ -509,7 +560,7 @@ async def dashboard(request: Request):
 # @app.get("/get_cluster_metrics")
 # async def get_cluster_metrics(cluster_name: str, node_name: str):
 #     try:
-#         conn = sqlite3.connect('cluster.db')
+#         conn = sqlite3.connect('cluster_1.db')
 #         c = conn.cursor()
 
 #         # Fetch the latest 100 metrics for the specified node and cluster
@@ -547,7 +598,7 @@ async def get_cluster_metrics(
     time_range: str = Query(default='latest', enum=['latest', '1h', '6h', '12h', '24h', '7d'])
 ):
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
 
 
@@ -708,7 +759,7 @@ async def get_cluster_metrics(
 async def get_cluster_stats(request: Request, cluster_name: str):
     try:
         # Get cluster credentials for SSH connection
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster_info = c.fetchone()
@@ -723,22 +774,49 @@ async def get_cluster_stats(request: Request, cluster_name: str):
         ssh.connect(cluster_info[0], port=cluster_info[1], username=cluster_info[2], password=cluster_info[3])
         
         # Fetch Nodes
+        # stdin, stdout, stderr = ssh.exec_command("""
+        #     kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,ROLES:.metadata.labels.kubernetes\.io/role
+        # """)
+        # nodes_output = stdout.read().decode('utf-8').strip().split('\n')
+        
+        # # Parse Nodes
+        # nodes = []
+        # for line in nodes_output[1:]:  # Skip header
+        #     parts = line.split()
+        #     if len(parts) >= 3:
+        #         nodes.append({
+        #             'name': parts[0],
+        #             'status': parts[1],
+        #             'roles': parts[2]
+        #         })
+        # Fetch Nodes
         stdin, stdout, stderr = ssh.exec_command("""
-            kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,ROLES:.metadata.labels.kubernetes\.io/role
+            kubectl get nodes -o wide
         """)
         nodes_output = stdout.read().decode('utf-8').strip().split('\n')
-        
+
+
         # Parse Nodes
         nodes = []
         for line in nodes_output[1:]:  # Skip header
             parts = line.split()
-            if len(parts) >= 3:
+            if len(parts) >= 2:
+                node_name = parts[0]
+                status = parts[1]
+                
+                # Determine roles
+                if 'control-plane' in line:
+                    role = 'control-plane'
+                else:
+                    role = 'worker'
+
+
                 nodes.append({
-                    'name': parts[0],
-                    'status': parts[1],
-                    'roles': parts[2]
-                })
-        
+                    'name': node_name,
+                    'status': status,
+                    'roles': role
+                })    
+                
         # Fetch Deployments
         stdin, stdout, stderr = ssh.exec_command("""
             kubectl get deployments --no-headers -o json
@@ -799,7 +877,7 @@ async def get_cluster_stats(request: Request, cluster_name: str):
         for node in nodes:
             try:
                 # Fetch historical node stats from database
-                conn = sqlite3.connect('cluster.db')
+                conn = sqlite3.connect('cluster_1.db')
                 cursor = conn.cursor()
                 
                 cursor.execute('''
@@ -839,7 +917,7 @@ async def get_cluster_stats(request: Request, cluster_name: str):
         for pod in pods:
             try:
                 # Fetch historical pod stats from database
-                conn = sqlite3.connect('cluster.db')
+                conn = sqlite3.connect('cluster_1.db')
                 cursor = conn.cursor()
                 
                 cursor.execute('''
@@ -909,7 +987,7 @@ async def get_cluster_stats(request: Request, cluster_name: str):
 async def get_cluster_services(cluster_name: str):
     try:
         # Establish database connection and fetch cluster details
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         
         # Fetch cluster details using the cluster_name
@@ -1007,7 +1085,7 @@ async def get_cluster_services(cluster_name: str):
 async def add_cluster(cluster: ClusterCredentials):
     global clusters
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute('''
             INSERT INTO clusters (name, ip, port, username, password, interval)
@@ -1051,7 +1129,7 @@ async def open_terminal(
     
     try:
         # Connect to the database to fetch cluster details
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1104,7 +1182,7 @@ async def update_image(
 ):
     try:
          # Get cluster credentials
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1145,7 +1223,7 @@ async def update_replicas(
 
 
         # Get cluster credentials
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1292,7 +1370,7 @@ async def upload_deployment(
     local_file_path = None
     try:
         # Database Connection
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         cursor = conn.cursor()
         
         # Fetch cluster connection details
@@ -1494,7 +1572,7 @@ async def upload_deployment(
 async def get_deployments_data(cluster_name: str):
     try:
         # Get cluster credentials
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1551,7 +1629,7 @@ from pydantic import conint
 async def delete_cluster(cluster_name: str):
     try:
         # Connect to the database
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         cursor = conn.cursor()
 
         # Check if the cluster exists
@@ -1586,7 +1664,7 @@ async def delete_cluster(cluster_name: str):
 # @app.get("/get_pod_metrics")
 # async def get_pod_metrics(pod_name: str):  # Changed from 'pod' to 'pod_name'
 #     try:
-#         conn = sqlite3.connect('cluster.db')
+#         conn = sqlite3.connect('cluster_1.db')
 #         c = conn.cursor()
 #         c.execute("""
 #             SELECT timestamp, cpu_percent, memory_percent 
@@ -1625,7 +1703,7 @@ async def get_pod_metrics(
     cluster_name: Optional[str] = None
 ):
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
 
 
@@ -1838,7 +1916,7 @@ def update_vm_resource_status(vm_name, status):
         conn.commit()
 def insert_pod_metrics(pod_name: str, timestamp: str, cpu_usage: str, memory_usage: str):
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         
         # Convert CPU and memory usage to percentages (remove units and convert if necessary)
@@ -1892,7 +1970,7 @@ async def insert_pod_metrics_from_command(pod_name: str):
 @app.get("/get_deployments")
 async def get_deployments(cluster_name: str):
     try:
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1932,7 +2010,7 @@ async def update_replicas(
 ):
     try:
         # Get cluster credentials
-        conn = sqlite3.connect('cluster.db')
+        conn = sqlite3.connect('cluster_1.db')
         c = conn.cursor()
         c.execute("SELECT ip, port, username, password FROM clusters WHERE name = ?", (cluster_name,))
         cluster = c.fetchone()
@@ -1994,7 +2072,859 @@ async def update_replicas(
         raise HTTPException(status_code=500, detail=str(e))   
 
 
+###################################################################################################################
+####################################Scalng code#####################################################################
+####################################################################################################################
+
+def connect_to_esxi_ssh():
+
+        # Replace with your ESXi credentials and datastore/VM details
+    host = "10.200.7.20"
+    user = "root"
+    password = "CH@cloud#01!!"
+    port = 22
     
+    """Connect to the ESXi host via SSH."""
+    try:
+        # Establish SSH connection
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(host, username=user, password=password, port=port)
+        print(f"Successfully connected to {host} via SSH")
+        return ssh_client
+    except Exception as e:
+        print(f"Failed to connect to {host} via SSH: {e}")
+        return None
+
+class NodeDetails(BaseModel):
+    cluster_name: str
+    ip: str
+    username: str
+    password: str
+    port: str
+
+@app.post("/manual_add_node/")
+def manual_add_node(node_details: NodeDetails):
+    cluster_name = node_details.cluster_name
+    ip = node_details.ip
+    username = node_details.username
+    password = node_details.password
+    port = node_details.port
+
+    print(f"Cluster Name: {cluster_name}")
+    print(f"IP: {ip}")
+    print(f"Username: {username}")
+    print(f"Password: {password}")
+    print(f"Port: {port}")
+
+    conn = sqlite3.connect('cluster_1.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+    cluster_details = cursor.fetchone()
+
+    target_ip_master, username_master, password_master, port_master = cluster_details
+    # Return the received data
+    
+    hostname1= add_node(
+        target_ip_master, username_master, password_master, port_master,
+        ip,username,password,port
+    )
+
+    # hostname1 = "abc"
+    return {"hostname": hostname1}
+
+def add_node(
+    target_ip_master, username_master, password_master, port_master,
+    target_ip_worker, username_worker, password_worker, port_worker
+):
+    
+    # Credentials for ansible the remote server CAN be left hard coded
+    remote_ip = "10.200.16.17"  # Replace with remote server IP
+    remote_user = "project"  # Replace with remote server username
+    remote_password = "project"  # Replace with remote server password
+    remote_port = 22  # Replace with the remote server SSH port
+    try:
+
+        ## Logic to reterive hostname of worker node
+        worker_hostname = None
+        try:
+            worker_ssh = paramiko.SSHClient()
+            worker_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            worker_ssh.connect(
+                hostname=target_ip_worker,
+                username=username_worker,
+                password=password_worker,
+                port=port_worker
+            )
+            stdin, stdout, stderr = worker_ssh.exec_command("hostname")
+            worker_hostname = stdout.read().strip().decode('utf-8')
+            print(f"worker ip:{target_ip_worker}")
+            print(f"Retrieved worker hostname: {worker_hostname}")
+            worker_ssh.close()
+        except Exception as e:
+            print(f"Failed to retrieve worker hostname: {e}")
+            return
+        
+        # Establish SSH connection to the remote server
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(remote_ip, username=remote_user, password=remote_password, port=remote_port)
+
+        # Remote file path
+        remote_file = '/home/project/ans/plays/add_hosts'
+
+        # Generate the line to add
+ # Generate the lines to add
+        line_to_add_master = f"{target_ip_master} ansible_user={username_master} ansible_ssh_pass={password_master} ansible_become_pass={password_master} ansible_port={port_master}"
+        line_to_add_worker = f"{target_ip_worker} ansible_user={username_worker} ansible_ssh_pass={password_worker} ansible_become_pass={password_worker} ansible_port={port_worker}"
+        line_to_add_vars = f"master_ip={target_ip_master}\nworker_user={username_worker}\n"
+
+        # Use SFTP to read and modify the file
+        sftp = ssh.open_sftp()
+        try:
+            # Read the file content
+            with sftp.open(remote_file, 'r') as file:
+                lines = file.readlines()
+
+            # Find the [master] and [worker] lines and insert the new lines below them
+            updated_lines = []
+            added_master = False
+            added_worker = False
+            added_vars = False
+            for line in lines:
+                updated_lines.append(line)
+                if '[master]' in line and not added_master:
+                    updated_lines.append(f"{line_to_add_master}\n")
+                    added_master = True
+                if '[worker]' in line and not added_worker:
+                    updated_lines.append(f"{line_to_add_worker}\n")
+                    added_worker = True
+                if '[all:vars]' in line and not added_vars:
+                    updated_lines.append(f"{line_to_add_vars}\n")
+                    added_vars = True
+
+            if not added_master:
+                raise Exception("The '[master]' section was not found in the file.")
+            if not added_worker:
+                raise Exception("The '[worker]' section was not found in the file.")
+            if not added_vars:
+                raise Exception("The '[all:vars]' section was not found in the file.")
+            
+
+            # Write the updated content back to the file
+            with sftp.open(remote_file, 'w') as file:
+                file.writelines(updated_lines)
+
+            print(f"Successfully added the lines to {remote_file} on {remote_ip}.")
+        
+        ## For troubleshooting Ping test
+            # ansible_command = f"ANSIBLE_HOST_KEY_CHECKING=False ansible -i /home/project/ans/plays/hosts -m ping all"
+            # print(f"Running Ansible command on remote server: {ansible_command}")
+
+            # sudo_command = f"echo {remote_password} | sudo -S {ansible_command}"
+
+            # stdin, stdout, stderr = ssh.exec_command(sudo_command)
+            # stdout_lines = stdout.readlines()
+            # stderr_lines = stderr.readlines()
+
+            # print("Ansible Command Output:")
+            # for line in stdout_lines:
+            #     print(line.strip())
+
+            # if stderr_lines:
+            #     print("Ansible Command Errors:")
+            #     for line in stderr_lines:
+            #         print(line.strip())
+
+            # if stdout.channel.recv_exit_status() == 0:
+            #     print("Ansible command executed successfully.")
+            # else:
+            #     print("Ansible command failed.")
+
+            ## Ansible plybook to add node
+
+            ansible_command = f"ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i /home/project/ans/plays/add_hosts /home/project/ans/plays/join.yml -e \"node_to_remove={worker_hostname}\""
+            print(f"Running Ansible command on remote server: {ansible_command}")
+
+            sudo_command = f"echo {remote_password} | sudo -S {ansible_command}"
+
+            stdin, stdout, stderr = ssh.exec_command(sudo_command)
+            stdout_lines = stdout.readlines()
+            stderr_lines = stderr.readlines()
+
+            print("Ansible Command Output:")
+            for line in stdout_lines:
+                print(line.strip())
+
+            if stderr_lines:
+                print("Ansible Command Errors:")
+                for line in stderr_lines:
+                    print(line.strip())
+
+            if stdout.channel.recv_exit_status() == 0:
+                print("Ansible command executed successfully.")
+            else:
+                print("Ansible command failed.")
+
+            updated_lines = []
+            for line in lines:
+                if line.strip() == line_to_add_master.strip():
+                    continue
+                if line.strip() == line_to_add_worker.strip():
+                    continue
+                if line.strip() == line_to_add_vars.strip():
+                    continue
+                updated_lines.append(line)
+
+                # Write the cleaned-up content back to the file
+            with sftp.open(remote_file, 'w') as file:
+                file.writelines(updated_lines)
+
+            print(f"Successfully removed the added lines from {remote_file}.")
+
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            ssh.close()
+            return worker_hostname
+    except Exception as e:
+        print(f"Failed to update the file: {e}")
+
+def power_on_vm_ssh(connect_to_esxi_ssh, vm_name):
+
+    """
+    Power on a VM using SSH on an ESXi host.
+
+    :param connect_to_esxi_ssh: Function to establish SSH connection to ESXi host.
+    :param vm_name: Name of the virtual machine to power on.
+    """
+    ssh = connect_to_esxi_ssh()
+    if ssh is None:
+        print("Failed to establish an SSH connection to the ESXi host.")
+        return
+
+    try:
+        # Get the list of VMs and their IDs
+        stdin, stdout, stderr = ssh.exec_command("vim-cmd vmsvc/getallvms")
+        vm_list = stdout.read().decode('utf-8')
+        if vm_name not in vm_list:
+            print(f"VM '{vm_name}' not found on the host.")
+            return
+
+        # Find the VM ID
+        vm_id = None
+        for line in vm_list.splitlines():
+            if vm_name in line:
+                vm_id = line.split()[0]
+                break
+
+        if vm_id is None:
+            print(f"VM '{vm_name}' not found in the list.")
+            return
+
+        # Power on the VM using its ID
+        power_on_command = f"vim-cmd vmsvc/power.on {vm_id}"
+        stdin, stdout, stderr = ssh.exec_command(power_on_command)
+        output = stdout.read().decode('utf-8')
+        error = stderr.read().decode('utf-8')
+
+        if "Powered on" in output:
+            print(f"VM '{vm_name}' powered on successfully.")
+        elif error:
+            print(f"Error powering on VM '{vm_name}': {error}")
+        else:
+            print(f"Unknown response: {output}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+    finally:
+        ssh.close()
+        print("Disconnected from ESXi host.")
+
+
+def power_off_vm_ssh(connect_to_exsi_ssh, vm_name,flag):
+    """
+    Power off a VM using SSH on an ESXi host.
+
+    :param esxi_host: ESXi host address
+    :param esxi_user: Username for the ESXi host
+    :param esxi_password: Password for the ESXi host
+    :param vm_name: Name of the virtual machine to power off
+    """
+    ssh = connect_to_esxi_ssh()
+    if ssh is None:
+        print("Failed to establish an SSH connection to the ESXi host.")
+        return
+    
+
+    # Get the list of VMs and their IDs
+    stdin, stdout, stderr = ssh.exec_command("vim-cmd vmsvc/getallvms")
+    vm_list = stdout.read().decode('utf-8')
+    if vm_name not in vm_list:
+        print(f"VM '{vm_name}' not found on the host.")
+        return
+
+    # Find the VM ID
+    for line in vm_list.splitlines():
+        if vm_name in line:
+            vm_id = line.split()[0]
+            break
+    else:
+        print(f"VM '{vm_name}' not found in the list.")
+        return
+
+    # Power off the VM using its ID
+    power_off_command = f"vim-cmd vmsvc/power.off {vm_id}"
+    stdin, stdout, stderr = ssh.exec_command(power_off_command)
+    output = stdout.read().decode('utf-8')
+    error = stderr.read().decode('utf-8')
+
+    print(output)
+    print(f"VM '{vm_name}' powered off successfully.")
+    if flag != True:
+        try:
+            # Connect to the SQLite database
+            print("connecting to db")
+            conn = sqlite3.connect('cluster_1.db')
+            cursor = conn.cursor()
+            print("connected to db")
+            # Execute the update query to set power_status to 'off' for the given vm_name
+            cursor.execute("""
+                            UPDATE registered_node
+                            SET power_status = 'off' , cluster_ip = ?
+                            WHERE vm_name = ?
+                            """, (None, vm_name,))
+            
+            # Commit the changes
+            conn.commit()
+            
+            # Check if any rows were affected
+            if cursor.rowcount > 0:
+                print(f"Successfully updated power_status for {vm_name} to 'off'.")
+            else:
+                print(f"No record found for {vm_name}.")
+        
+        except sqlite3.Error as e:
+            print(f"SQLite error occurred: {e}")
+        
+        finally:
+            # Close the connection
+            conn.close()
+
+
+    ssh.close()
+
+
+def create_new_vm(connect_to_esxi_ssh, folder_name, new_name):
+    """
+    Register a VM using vim-cmd over SSH and return the VM name based on the newly created VM's ID.
+
+    :param connect_to_esxi_ssh: Function to establish SSH connection to ESXi host.
+    :param folder_name: Folder where the VM's files are located.
+    :param new_name: Name of the new VM.
+    :return: Name of the newly created VM or None if an error occurs.
+    """
+    ssh = connect_to_esxi_ssh()
+    if ssh is None:
+        print("Failed to establish an SSH connection to the ESXi host.")
+        return None
+
+    datastore_name = "DATA_7.20"
+    try:
+        # Construct the .vmx path
+        vmx_path = f"/vmfs/volumes/{datastore_name}/{folder_name}/{new_name}.vmx"
+        print(f"VMX Path: {vmx_path}")
+        
+        # Register the VM and capture its ID
+        command = f"vim-cmd solo/registervm {vmx_path}"
+        stdin, stdout, stderr = ssh.exec_command(command)
+        
+        # Capture command output and error
+        output = stdout.read().decode().strip()
+        error = stderr.read().decode().strip()
+        
+        if error:
+            print(f"VM registration error: {error}")
+            raise Exception(f"Error during VM registration: {error}")
+        
+        print(f"VM registered successfully. Output: {output}")
+        
+        # Parse the VM ID from the output
+        vm_id = output.strip()  # Typically, the output is the VM ID
+        print(f"Registered VM ID: {vm_id}")
+        
+        # Retrieve VM details for the given VM ID
+        command = f"vim-cmd vmsvc/get.summary {vm_id}"
+        stdin, stdout, stderr = ssh.exec_command(command)
+        vm_summary_output = stdout.read().decode()
+        error = stderr.read().decode()
+        
+        if error:
+            print(f"Error retrieving VM summary: {error}")
+            raise Exception(f"Error retrieving VM summary: {error}")
+        
+        # Extract VM name from the summary
+        for line in vm_summary_output.splitlines():
+            if "name" in line:
+                vm_name = line.split('"')[1]  # Extract the value inside quotes
+                print(f"VM Name: {vm_name}")
+                return vm_name
+        
+        raise Exception(f"VM name could not be extracted for VM ID {vm_id}.")
+    except Exception as e:
+        print(f"Error during VM creation: {e}")
+        return None
+    finally:
+        ssh.close()
+        print("Disconnected from ESXi host.")
+
+    
+def unregister_vm(connect_to_exsi_ssh, vm_name):
+    """Unregister a VM using vim-cmd over SSH."""
+    ssh = connect_to_esxi_ssh()
+    if ssh is None:
+        print("Failed to establish an SSH connection to the ESXi host.")
+        return None
+    try:
+        # Retrieve all VMs to find the VM ID
+        command = "vim-cmd vmsvc/getallvms"
+        stdin, stdout, stderr = ssh.exec_command(command)
+        vm_list_output = stdout.read().decode()
+        error = stderr.read().decode()
+
+        if error:
+            print(f"Error retrieving VM list: {error}")
+            raise Exception(f"Error retrieving VM list: {error}")
+
+        # Find the VM ID for the given VM name
+        vm_id = None
+        for line in vm_list_output.splitlines():
+            if vm_name in line:
+                vm_id = line.split()[0]  # The first column is the VM ID
+                break
+
+        if not vm_id:
+            raise Exception(f"VM '{vm_name}' not found.")
+
+        print(f"VM ID for '{vm_name}' is {vm_id}. Proceeding with unregistration.")
+
+        # Unregister the VM using its ID
+        command = f"vim-cmd vmsvc/unregister {vm_id}"
+        stdin, stdout, stderr = ssh.exec_command(command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+        if error:
+            print(f"Error unregistering VM: {error}")
+            raise Exception(f"Error unregistering VM: {error}")
+
+        print(f"VM '{vm_name}' successfully unregistered. Output: {output}")
+        conn = sqlite3.connect('cluster_1.db')
+        cursor = conn.cursor()
+        cursor.execute("""
+                            UPDATE ips_db
+                            SET status = 'NO_VM', vm_name = None
+                            WHERE vm_name = ?
+                            """, (vm_name))
+        conn.commit()
+        conn.close()
+        
+
+        return True  # Indicate success
+    except Exception as e:
+        print(f"Error during VM unregistration: {e}")
+        return False  # Indicate failure
+
+@app.post("/scale_node/{cluster_name}")
+def scale_node(cluster_name: str):
+
+    conn = sqlite3.connect('cluster_1.db')
+    cursor = conn.cursor()
+
+    # Fetch IP Assigned VM_Name data from db
+    cursor.execute("SELECT * FROM ips_db")
+    ips_db = cursor.fetchall()
+
+    # Fetch Folder_name new_name register data from db
+    cursor.execute("SELECT * FROM get_vm_name")
+    extra_node_hide = cursor.fetchall()
+
+    # Fetch registered node data from db
+    cursor.execute("SELECT * FROM registered_node")
+    registered_node = cursor.fetchall()
+    print(cluster_name)
+    cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+    cluster_details = cursor.fetchone()
+
+    target_ip_master, username_master, password_master, port_master = cluster_details
+    
+    flag = 1
+    # Traverse the data storage to find the tuple with assigned_to as None (NULL)
+    ## Update this for loop based on the format reterived from DB
+    for record in registered_node:
+        VM_name, IP, hostname, state , assigned_to = record
+
+        if assigned_to is None:
+            # Call the add_node function and return the hostname
+            flag = 0
+            if state == "on":
+                target_ip_worker = IP
+                username_worker = "test"
+                password_worker="test"
+                port_worker="22"
+                hostname1 = add_node(
+                    target_ip_master, username_master, password_master, port_master,
+                    target_ip_worker, username_worker, password_worker, port_worker
+                )
+                # hostname1 = "power on"
+                ## Here update the registered_node record for None to cluster IP 
+                cursor.execute("""
+                UPDATE registered_node
+                SET cluster_ip = ?
+                WHERE vm_name = ? AND cluster_ip IS NULL
+                """, (target_ip_master, VM_name))
+
+                # Commit the changes and close the connection
+                conn.commit()
+                break
+                # conn.close()
+
+            elif state == "off":
+                print("running for off state")
+                power_on_vm_ssh(connect_to_esxi_ssh,VM_name)
+                time.sleep(60)
+                target_ip_worker = IP 
+                remote_ip = "10.200.16.17"  # Replace with remote server IP
+                remote_user = "project"  # Replace with remote server username
+                remote_password = "project"  # Replace with remote server password
+                remote_port = 22  # Replace with the remote server SSH port
+
+                try:
+                    ssh = paramiko.SSHClient()
+                    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    ssh.connect(remote_ip, username=remote_user, password=remote_password, port=remote_port)
+
+                    print(f"Connected to Ansible server at {remote_ip}.") # The new IP to assign to the VM
+                    print(f"targetr ip worker : {target_ip_worker}")
+                    playbook_path = "/home/project/ans/plays/change_ip.yml"  # Update with the playbook path on the remote server
+                    inventory_path = "/home/project/ans/plays/hosts"  # Update with the inventory file path
+                    ansible_command = f"ansible-playbook {playbook_path} -i {inventory_path} --extra-vars 'new_ip={target_ip_worker}'"
+                    print("next ansible command")
+                    sudo_command = f"echo {remote_password} | sudo -S {ansible_command}"
+
+                    stdin, stdout, stderr = ssh.exec_command(sudo_command)
+                    playbook_output = stdout.read().decode()
+                    playbook_error = stderr.read().decode()
+
+                    if playbook_error:
+                        print(f"Ansible playbook error: {playbook_error}")
+
+                    print(f"Ansible playbook executed successfully: {playbook_output}")
+                    # Update ip table
+                    # update extra node
+                except Exception as e:
+                    print(f"Error during SSH or playbook execution: {e}")
+
+                finally:
+                    ssh.close()
+                    print("Disconnected from the Ansible server.")
+                
+                username_worker = "test"
+                password_worker="test"
+                port_worker="22"
+                hostname1 = add_node(target_ip_master, username_master, password_master, port_master,
+                    target_ip_worker, username_worker, password_worker, port_worker)
+                # hostname1 = "power off"
+                ## Here update the registered_node record for None to cluster IP 
+                cursor.execute("""
+                UPDATE registered_node
+                SET cluster_ip = ?, power_status = ?
+                WHERE vm_name = ? AND cluster_ip IS NULL
+                """, (target_ip_master, "on", VM_name))
+                flag = 0
+                # Commit the changes and close the connection
+                conn.commit()
+                break
+                # conn.close()
+        
+
+    if flag == 1:
+        for record in extra_node_hide:
+            folder_name, new_name, status = record
+            print (f"Folder_name:{folder_name}, New_name :{new_name}, status: {status}")
+            if status == "unregistered":
+                # Create and register a new VM
+                New_VM_name = create_new_vm(connect_to_esxi_ssh, folder_name, new_name)
+                print(f"new vm create: {New_VM_name}")
+                # New_VM_name = "qwe"
+                if New_VM_name:
+                    ## Power on VM
+                    power_on_vm_ssh(connect_to_esxi_ssh, New_VM_name)
+                    time.sleep(60)
+                    # if New_VM_name == "sushant_backup_1":
+                    #     power_off_vm_ssh(connect_to_esxi_ssh, New_VM_name,True)
+                    #     time.sleep(20)
+                    #     power_on_vm_ssh(connect_to_esxi_ssh, New_VM_name)
+                    #     time.sleep(20)
+                    print("Continuing program flow")
+                    # Assign an unallocated IP to the new VM
+                    for ip_record in ips_db:
+                        ip, assigned_status, vm_name = ip_record
+                        if assigned_status is None:
+                            print(f"IP: {ip}, Assigned Status: {assigned_status}, VM Name: {vm_name}")
+                            remote_ip = "10.200.16.17"  # Replace with remote server IP
+                            remote_user = "project"  # Replace with remote server username
+                            remote_password = "project"  # Replace with remote server password
+                            remote_port = 22  # Replace with the remote server SSH port
+
+                            try:
+
+                                ssh = paramiko.SSHClient()
+                                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                                ssh.connect(remote_ip, username=remote_user, password=remote_password, port=remote_port)
+
+                                print(f"Connected to Ansible server at {remote_ip}.")
+                                new_ip = ip  # The new IP to assign to the VM
+                                print(f"New ip : {new_ip}")
+                                playbook_path = "/home/project/ans/plays/change_ip.yml"  # Update with the playbook path on the remote server
+                                inventory_path = "/home/project/ans/plays/hosts"  # Update with the inventory file path
+                                ansible_command = f"ansible-playbook {playbook_path} -i {inventory_path} --extra-vars 'new_ip={new_ip}'"
+
+                                sudo_command = f"echo {remote_password} | sudo -S {ansible_command}"
+
+                                stdin, stdout, stderr = ssh.exec_command(sudo_command)
+                                playbook_output = stdout.read().decode()
+                                playbook_error = stderr.read().decode()
+
+                                if playbook_error:
+                                    print(f"Ansible playbook error: {playbook_error}")
+                                    raise Exception("Failed to execute the Ansible playbook on the remote server.")
+
+                                print(f"Ansible playbook executed successfully: {playbook_output}")
+                                # Update ip table
+                                # update extra node
+                            except Exception as e:
+                                print(f"Error during SSH or playbook execution: {e}")
+
+                            finally:
+                                ssh.close()
+                                print("Disconnected from the Ansible server.")
+
+
+                            # # Add the new VM as a node to the cluster
+                            hostname1 = add_node(
+                                target_ip_master, username_master, password_master, port_master,
+                                new_ip, "test", "test", "22"
+                            )
+                            
+                            # hostname1 = "scale1"
+                            cursor.execute("""
+                            UPDATE ips_db
+                            SET status = 'Assigned', vm_name = ?
+                            WHERE ip_address = ?
+                            """, (New_VM_name, ip))
+
+
+                            # # Add the new VM into the registered_node table
+                            cursor.execute("SELECT COUNT(*) FROM registered_node WHERE vm_name = ?", (New_VM_name,))
+                            if cursor.fetchone()[0] == 0:
+                                cursor.execute("""
+                                    INSERT INTO registered_node (vm_name, ip_address, hostname, power_status, cluster_ip)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (New_VM_name, new_ip, hostname1, "on", target_ip_master))
+                            else:
+                                print(f"VM name {New_VM_name} already exists in registered_node.")
+                                # You can choose to update the existing record here if needed
+                                cursor.execute("""
+                                    UPDATE registered_node
+                                    SET ip_address = ?, hostname = ?, power_status = ?, cluster_ip = ?
+                                    WHERE vm_name = ?
+                                """, (new_ip, hostname1, "on", target_ip_master, New_VM_name))
+
+                            print(f"New name: {new_name}")
+                            cursor.execute("""
+                            UPDATE get_vm_name
+                            SET status = 'registered'
+                            WHERE new_name = ?
+                            """, (new_name,))
+
+                            # hostname1 = "test success"
+                            # Commit the changes and close the connection
+                            conn.commit()
+                            
+
+                            ## Update  extra_node_hide registered_node
+                            # Update `ips_db` to mark the IP as assigned
+                            #ips_db[ips_db.index(ip_record)] = (ip, "Assigned", New_VM_name)
+                            break
+                break
+        
+            
+    conn.close()
+    return {"hostname": hostname1}
+
+@app.post("/remove_node/{cluster_name}/{worker_name}")
+def remove_node(cluster_name: str, worker_name: str):
+    conn = None
+    ssh = None
+    worker_ssh = None
+    try:    
+        print(f"cluster name = {cluster_name}, worker_name : {worker_name}")
+        conn = sqlite3.connect('cluster_1.db')
+        cursor = conn.cursor()
+        
+        # Fetch details from the clusters table
+        cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+        cluster_details = cursor.fetchone()
+        
+        if cluster_details is None:
+            raise HTTPException(status_code=404, detail="Cluster not found")
+        
+        cluster_ip, cluster_user, cluster_password, cluster_port = cluster_details
+        print(f"Cluster detail {cluster_ip, cluster_user, cluster_password, cluster_port}")
+
+        conn = sqlite3.connect('cluster_1.db')
+        cursor = conn.cursor()
+
+        # Check if worker exists in registered_node table
+        cursor.execute("SELECT ip_address, vm_name FROM registered_node WHERE hostname = ?", (worker_name,))
+        result = cursor.fetchone()
+
+        if result:
+            worker_ip, worker_vm_name = result
+
+        print(f"worker detail: {worker_name,worker_ip}")
+
+        if worker_ip is None:
+            raise HTTPException(status_code=404, detail="Worker node not found")
+    
+
+            ## in mastre node
+        reply = "in same cluster"
+        print("logging into master node")
+        ssh = paramiko.SSHClient()
+        print("paramiko ")
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        print("set missing host")
+        ssh.connect(cluster_ip, username=cluster_user, password=cluster_password,port=cluster_port)
+        print("logged into master node")
+        # Execute kubectl cordon command to mark the node unschedulable
+
+        print("running cordon")
+        cordon_command = f"kubectl cordon {worker_name}"
+        stdin, stdout, stderr = ssh.exec_command(cordon_command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            raise Exception(f"Error executing cordon command: {error}")
+
+        print("running drain")
+        # Drain the worker node (ignore daemonsets)
+        drain_command = f"kubectl drain {worker_name} --ignore-daemonsets --force"
+        stdin, stdout, stderr = ssh.exec_command(drain_command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+        print("running delete")
+            # Delete the node from the cluster
+        delete_command = f"kubectl delete node {worker_name}"
+        stdin, stdout, stderr = ssh.exec_command(delete_command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            raise Exception(f"Error executing delete command: {error}")
+        ssh.close()
+            ## for worker disconnect and shutdown
+        if worker_vm_name != None:
+            print(f"the worker details is {worker_ip} ")
+            worker_ssh = paramiko.SSHClient()
+            worker_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            worker_ssh.connect(worker_ip, username="test", password="test",port="22")
+
+            print("running reset -f command")
+            reset_command = "kubeadm reset -f"
+            sudo_reset_command = f"echo {"test"} | sudo -S {reset_command}"
+            print(sudo_reset_command)
+            stdin, stdout, stderr = worker_ssh.exec_command(sudo_reset_command)
+            print(f"exectuted command in {worker_ip}")
+            output = stdout.read().decode()
+            error = stderr.read().decode()
+            time.sleep(10)
+            print(stdout)
+            
+            additional_reset_commands = [
+                "sudo rm -rf /etc/kubernetes",
+                "sudo rm -rf /var/lib/kubelet",
+                "sudo rm -rf /var/lib/etcd",
+                "sudo rm -rf /etc/cni",
+                "sudo rm -rf /opt/cni",
+                "sudo systemctl stop kubelet",
+                "sudo systemctl disable kubelet"
+            ]
+            for cmd in additional_reset_commands:
+                worker_ssh.exec_command(f"echo {'test'} | sudo -S {cmd}")
+
+            worker_ssh.close()
+            print("now powering off vm")
+            power_off_vm_ssh(connect_to_esxi_ssh,worker_vm_name,False)
+
+        else:
+            reply = "not in same cluster"
+
+        conn.close()
+        return {"reply":reply}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    
+@app.post("/delete_deployment/{cluster_name}/{deployment_name}")
+async def delete_deployment(cluster_name: str, deployment_name: str):
+    try:
+        # Connect to the database to get cluster details
+        conn = sqlite3.connect('cluster_1.db')
+        cursor = conn.cursor()
+
+
+        # Fetch cluster connection details
+        cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+        cluster_details = cursor.fetchone()
+        
+        if not cluster_details:
+            raise HTTPException(status_code=404, detail="Cluster not found")
+        
+        target_ip_master, username_master, password_master, port_master = cluster_details
+        
+        # Establish SSH connection to the master node
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(target_ip_master, username=username_master, password=password_master, port=port_master)
+
+
+        # Execute kubectl delete command
+        delete_command = f"kubectl delete deployment {deployment_name}"
+        stdin, stdout, stderr = ssh.exec_command(delete_command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+
+        if error:
+            raise HTTPException(status_code=400, detail=f"Error deleting deployment: {error}")
+
+
+        ssh.close()
+        
+        return {"message": f"Deployment {deployment_name} successfully deleted."}
+
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
 # Run the FastAPI application
 if __name__ == "__main__":
     import uvicorn

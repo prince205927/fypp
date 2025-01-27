@@ -36,7 +36,7 @@ body: clusterData,
 invalidatesTags: ["Clusters"],
 }),
 
-  
+
 
     getClusterMetrics: builder.query({
       query: ({ clusterName, nodeName, timeRange = 'latest' }) => ({
@@ -106,7 +106,7 @@ getClusterServices: builder.query({
         try {
             const response = await queryFulfilled;
             
-        
+            // Check for success status in the response
             if (response.data.status === 'success') {
                 toast.success(`Cluster '${clusterName}' deleted successfully`);
             } else {
@@ -115,7 +115,7 @@ getClusterServices: builder.query({
         } catch (error) {
             console.error('Delete cluster error:', error);
             
-
+            // More comprehensive error handling
             if (error.error) {
                 const { status, data } = error.error;
                 
@@ -188,6 +188,58 @@ getClusterServices: builder.query({
       providesTags: ['ClusterDetails'],
     }),
 
+    deleteDeployment: builder.mutation({
+      query: ({ clusterName, deploymentName }) => ({
+        url: `/delete_deployment/${clusterName}/${deploymentName}`,
+        method: 'POST',
+      }),
+      
+      // Optimistic update
+      async onQueryStarted({ clusterName, deploymentName }, { dispatch, queryFulfilled }) {
+        const patchResult = dispatch(
+          apiSlice.util.updateQueryData('getClusterDetails', clusterName, (draft) => {
+            // Remove the deployment from the draft
+            if (draft.deployments) {
+              draft.deployments = draft.deployments.filter(
+                deployment => deployment.name !== deploymentName
+              );
+            }
+          })
+        );
+
+
+        try {
+          await queryFulfilled;
+          toast.success(`Deployment ${deploymentName} successfully deleted`);
+        } catch (error) {
+          patchResult.undo();
+          toast.error(`Failed to delete deployment: ${error.message}`);
+        }
+      },
+    }),
+    deletePod: builder.mutation({
+      query: ({ clusterName, podName }) => ({
+          url: `/delete_pod/${clusterName}/${podName}`, // Define this endpoint in your backend
+          method: 'POST',
+      }),
+      // Optimistic update (optional)
+      async onQueryStarted({ clusterName, podName }, { dispatch, queryFulfilled }) {
+          const patchResult = dispatch(
+              apiSlice.util.updateQueryData('getClusterDetails', clusterName, (draft) => {
+                  // Remove the pod from the draft
+                  draft.pods = draft.pods.filter(pod => pod.name !== podName);
+              })
+          );
+
+
+          try {
+              await queryFulfilled;
+          } catch {
+              patchResult.undo();
+          }
+      },
+  }),
+
     updateReplicas: builder.mutation({
       query: (data) => {
         const formData = new FormData();
@@ -214,7 +266,7 @@ getClusterServices: builder.query({
           // Optimistically update the local cache
           const patchResult = dispatch(
             clusterApi.util.updateQueryData('getClusterDetails', data.clusterName, (draft) => {
-        
+              // Find and update the specific deployment's replicas
               const imageToUpdate = draft.parsedImages.find(
                 img => img.deployment === data.deploymentName
               );
@@ -225,10 +277,10 @@ getClusterServices: builder.query({
             })
           );
 
-        
+          // Wait for the actual mutation to complete
           await queryFulfilled;
         } catch {
-       
+          // If mutation fails, revert the optimistic update
           patchResult.undo();
         }
       }
@@ -251,7 +303,7 @@ getClusterServices: builder.query({
         formData.append('file', file, file.name);
 
         return {
-          url: 'http://:800127.0.0.10/upload_deployment',
+          url: 'http://127.0.0.1:8000/upload_deployment',
           method: 'POST',
           body: formData,
 
@@ -318,9 +370,9 @@ getClusterServices: builder.query({
           method: 'POST',
           body: formData,
           
-    
+          // Optional: Custom headers if needed
           headers: {
-           
+            // You can add custom headers here if required
           },
     
     
@@ -366,7 +418,7 @@ getClusterServices: builder.query({
       // Enhanced error transformation
       transformErrorResponse: (response, meta, arg) => {
         // Comprehensive error logging
-        console.group(' Image Update Error');
+        console.group('❌ Image Update Error');
         console.error('Error Response:', response);
         console.log('Error Metadata:', meta);
         console.log('Error Arguments:', arg);
@@ -432,7 +484,15 @@ getClusterServices: builder.query({
       }
     }),
 
-   
+   deleteNode: builder.mutation({
+      query: ({ clusterName, nodeName }) => ({
+        url: `remove_node/${clusterName}/${nodeName}`,
+        method: 'POST',
+      }),
+      // Invalidate the cluster details cache to force a refetch
+      invalidatesTags: ['ClusterDetails'],
+    }),
+  
 
     updateClusterInterval: builder.mutation({
       query: ({ clusterName, interval }) => ({
@@ -454,6 +514,8 @@ export const {
   useUpdateReplicasMutation,
   useGetDeploymentsDataQuery,
   useUploadDeploymentMutation,
+  useDeleteDeploymentMutation,
+  useDeleteNodeMutation,
   useGetClusterMetricsQuery,
   useGetClustersQuery,
   useGetClusterDetailsQuery,
@@ -468,4 +530,5 @@ export const {
   useTriggerJobMutation,
   useGetJobDetailsQuery,
   useGetConsoleOutputQuery,
+  useDeletePodMutation
 } = clusterApi;
