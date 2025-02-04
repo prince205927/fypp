@@ -40,6 +40,9 @@ from typing import Optional
 from fastapi import FastAPI, Path
 from typing import Union
 import time
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.base import JobLookupError
+import requests
 
 jenkins_router = APIRouter()
 scaling_router = APIRouter()
@@ -2921,7 +2924,171 @@ async def delete_deployment(cluster_name: str, deployment_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Initialize scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
 
+@app.on_event("shutdown")
+def shutdown_event():
+    scheduler.shutdown()
+
+class ScalingToggle(BaseModel):
+    enabled: bool
+
+# Global state tracking
+scaling_state = {}
+scaling_nodes = {}
+
+@app.post("/toggle_scaling/{cluster_name}")
+def toggle_scaling(cluster_name: str, toggle: ScalingToggle):
+    action = "enabling" if toggle.enabled else "disabling"
+    print(f"{action} auto-scaling for cluster: {cluster_name}")
+    
+    if toggle.enabled:
+        scheduler.add_job(
+            check_and_scale_cluster,
+            'interval',
+            minutes=0.1,
+            args=[cluster_name],
+            id=f"scaling_{cluster_name}"
+        )
+        print(f"Added scheduled job for {cluster_name} (every 6 seconds)")
+    else:
+        try:
+            scheduler.remove_job(f"scaling_{cluster_name}")
+            print(f"Removed scheduled job for {cluster_name}")
+        except JobLookupError:
+            print(f"No existing job found for {cluster_name}")
+    
+    return {"message": f"Automatic scaling {'enabled' if toggle.enabled else 'disabled'}"}
+
+def check_and_scale_cluster(cluster_name: str):
+    print(f"\n=== Starting scaling check for {cluster_name} ===")
+    
+    try:
+        # Get cluster credentials
+        conn = sqlite3.connect('cluster_1.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT ip, username, password, port FROM clusters WHERE name = ?", (cluster_name,))
+        cluster_details = cursor.fetchone()
+        conn.close()
+        
+        if not cluster_details:
+            print(f"Cluster {cluster_name} not found in database")
+            return
+
+        master_ip, master_user, master_pass, master_port = cluster_details
+        print(f"Connecting to master node at {master_ip}:{master_port}")
+
+        # SSH connection
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(master_ip, username=master_user, password=master_pass, port=master_port)
+        
+        # Get node roles
+        print("Fetching node roles...")
+        stdin, stdout, stderr = ssh.exec_command("kubectl get nodes -o json")
+        nodes_info = json.loads(stdout.read().decode())
+        control_plane_nodes = set()
+        
+        for node in nodes_info['items']:
+            name = node['metadata']['name']
+            roles = [label.replace('node-role.kubernetes.io/', '') 
+                    for label in node['metadata']['labels'].keys()
+                    if 'node-role.kubernetes.io/' in label]
+            print(f"Node {name} has roles: {roles}")
+            if 'control-plane' in roles:
+                control_plane_nodes.add(name)
+        
+        print(f"Control plane nodes: {control_plane_nodes}")
+
+        # Get node metrics
+        print("\nFetching node metrics...")
+        stdin, stdout, stderr = ssh.exec_command("kubectl top nodes")
+        output = stdout.read().decode().strip()
+        error = stderr.read().decode()
+        
+        if error:
+            print(f"Error getting metrics: {error}")
+            return
+
+        print("\nNode Metrics:")
+        worker_nodes = []
+        for line in output.split('\n')[1:]:  # Skip header
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+                
+            name = parts[0]
+            cpu = parts[2].rstrip('%')
+            mem = parts[4].rstrip('%')
+
+            # Skip control plane nodes
+            if name in control_plane_nodes:
+                print(f"Skipping control plane node: {name}")
+                continue
+
+            # Handle unknown metrics
+            if cpu == "<unknown>" or mem == "<unknown>":
+                print(f"Skipping {name} with unknown metrics (status: {parts[1]})")
+                continue
+
+            cpu = int(cpu)
+            mem = int(mem)
+            worker_nodes.append({'name': name, 'cpu': cpu, 'mem': mem})
+            print(f"{name}: CPU {cpu}%, MEM {mem}%")
+
+        # Initialize cluster state
+        if cluster_name not in scaling_state:
+            scaling_state[cluster_name] = {'scaled_up': False, 'scaled_down': False}
+        if cluster_name not in scaling_nodes:
+            scaling_nodes[cluster_name] = []
+
+        # Check scaling conditions
+        high_usage = any(node['cpu'] > 70 or node['mem'] > 70 for node in worker_nodes)
+        low_usage = all(node['cpu'] < 30 and node['mem'] < 30 for node in worker_nodes)
+        
+        print(f"\nScaling analysis:")
+        print(f"High usage threshold breached: {high_usage}")
+        print(f"Low usage threshold met: {low_usage}")
+        print(f"Current scaling state: {scaling_state[cluster_name]}")
+        print(f"Scaled nodes: {scaling_nodes[cluster_name]}")
+
+        # Scaling logic
+        if high_usage and not scaling_state[cluster_name]['scaled_up']:
+            print("Triggering scale up...")
+            # try:
+            #     response = requests.post(f"http://localhost:8000/scale_node/{cluster_name}")
+            #     if response.ok:
+            #         hostname = response.json().get('hostname')
+            #         print(f"Successfully scaled up. New node: {hostname}")
+            #         scaling_nodes[cluster_name].append(hostname)
+            #         scaling_state[cluster_name]['scaled_up'] = True
+            # except Exception as e:
+            #     print(f"Scale up failed: {str(e)}")
+
+        elif low_usage and scaling_nodes[cluster_name] and not scaling_state[cluster_name]['scaled_down']:
+            hostname = scaling_nodes[cluster_name].pop()
+            print(f"Triggering scale down for node: {hostname}")
+            # try:
+            #     requests.post(f"http://localhost:8000/remove_node/{cluster_name}/{hostname}")
+            #     scaling_state[cluster_name]['scaled_down'] = True
+            #     print(f"Successfully removed node: {hostname}")
+            # except Exception as e:
+            #     print(f"Scale down failed: {str(e)}")
+            #     scaling_nodes[cluster_name].append(hostname)  # Re-add if failed
+
+        # Reset states if conditions change
+        if not high_usage:
+            scaling_state[cluster_name]['scaled_up'] = False
+        if not low_usage:
+            scaling_state[cluster_name]['scaled_down'] = False
+
+        ssh.close()
+        print(f"=== Completed scaling check for {cluster_name} ===\n")
+
+    except Exception as e:
+        print(f"!!! Critical error in scaling check: {str(e)} !!!")
 
 
 
