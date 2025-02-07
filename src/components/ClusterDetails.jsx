@@ -188,8 +188,9 @@ export default function ClusterDetails() {
 
 
   const handleRefreshPage = () => {
-    window.location.reload();
+    window.location.href = window.location.href; 
   };
+
 
   const TerminalModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
