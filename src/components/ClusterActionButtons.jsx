@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
@@ -13,7 +13,19 @@ export const ClusterActionButtons = ({ clusterName }) => {
     manualNodeAdd: false,
     automaticScaling: false
   });
+  useEffect(() => {
+    const fetchScalingState = async () => {
+        try {
+            const response = await axios.get(`${BASE_URL}/scaling_state/${clusterName}`);
+            setIsAutomaticScalingEnabled(response.data.state);
+        } catch (error) {
+            console.error('Failed to fetch scaling state:', error);
+            toast.error('Failed to fetch automatic scaling state');
+        }
+    };
 
+    fetchScalingState();
+}, [clusterName]);
 
   // Manual Node Addition Handler
   const handleManualNodeAdd = async (formData) => {
@@ -173,7 +185,29 @@ const handleToggle = async () => {
 
   return (
     <div className="relative w-full">
-      <div className="flex justify-end items-center space-x-4 mb-4">
+    <div className="flex items-center justify-between mb-4 space-x-4">
+      {/* Toggle Button */}
+      <div className="flex items-center">
+        <span className="mr-2">
+          {isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}
+        </span>
+        <button
+          onClick={handleToggle}
+          disabled={isLoading.scalingToggle}
+          className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 ${
+            isAutomaticScalingEnabled ? 'bg-green-500' : 'bg-gray-200'
+          } ${isLoading.scalingToggle ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          <span
+            className={`transform transition-transform duration-200 absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow ${
+              isAutomaticScalingEnabled ? 'translate-x-5' : ''
+            }`}
+          />
+        </button>
+      </div>
+  
+      {/* Buttons Group */}
+      <div className="flex items-center space-x-4">
         {/* Manual Node Addition Button */}
         <button
           onClick={() => setIsManualNodeModalOpen(true)}
@@ -181,8 +215,7 @@ const handleToggle = async () => {
         >
           Manual Node Addition
         </button>
-
-
+  
         {/* Automatic Node Addition Button */}
         <button
           onClick={handleAutomaticScaling}
@@ -192,33 +225,14 @@ const handleToggle = async () => {
           {isLoading.automaticScaling ? 'Adding Nodes...' : 'Automatic Node Addition'}
         </button>
       </div>
-      {/* Toggle Button */}
-<div className="flex items-center">
-  <span className="mr-2">
-    {isAutomaticScalingEnabled ? 'Automatic Scaling On' : 'Automatic Scaling Off'}
-  </span>
-  <button
-    onClick={handleToggle}
-    disabled={isLoading.scalingToggle}
-    className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 ${
-      isAutomaticScalingEnabled ? 'bg-green-500' : 'bg-gray-200'
-    } ${isLoading.scalingToggle ? 'opacity-50 cursor-not-allowed' : ''}`}
-  >
-    <span
-      className={`transform transition-transform duration-200 absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow ${
-        isAutomaticScalingEnabled ? 'translate-x-5' : ''
-      }`}
-    />
-  </button>
-</div>
-
-
-      {/* Manual Node Modal */}
-      <ManualNodeModal 
-        isOpen={isManualNodeModalOpen} 
-        onClose={() => setIsManualNodeModalOpen(false)} 
-        onSubmit={handleManualNodeAdd} 
-      />
     </div>
+  
+    {/* Manual Node Modal */}
+    <ManualNodeModal 
+      isOpen={isManualNodeModalOpen} 
+      onClose={() => setIsManualNodeModalOpen(false)} 
+      onSubmit={handleManualNodeAdd} 
+    />
+  </div>
   );
 };

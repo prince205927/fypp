@@ -38,7 +38,7 @@ import {
 } from "../features/clusters/clusterApi";
 
 import { NodeMetrics } from "./NodeMetrics";
-import { toast } from "react-toastify";
+import { toast } from "react-hot-toast";
 import { ImagesSection } from "./ImagesSection";
 import { PodMetrics } from "./PodMetrics";
 import { useNavigate } from 'react-router-dom';

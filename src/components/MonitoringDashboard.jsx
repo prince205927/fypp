@@ -12,7 +12,7 @@ import {
   Sun ,
   Trash2
 } from 'lucide-react';
-import { toast } from 'react-toastify';
+import { toast } from 'react-hot-toast';
 import { 
   useGetClustersQuery, 
   useAddClusterMutation,

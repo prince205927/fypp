@@ -7,7 +7,7 @@ import {
   useDeleteDeploymentMutation,
   useDeletePodMutation,
 } from "../features/clusters/clusterApi";
-import { toast } from "react-toastify";
+import { toast } from "react-hot-toast";
 import {
   Server,
   Box,

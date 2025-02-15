@@ -1,6 +1,6 @@
 import { useGetClusterDetailsQuery } from "../features/clusters/clusterApi";
 import { SystemCard } from "./MonitoringDashboard";
-import { toast } from 'react-toastify';
+import { toast } from 'react-hot-toast';
 const ClusterCardWithDetails = ({ cluster, onDelete, darkMode, navigate }) => {
     const { data: details, isLoading: isDetailsLoading } = useGetClusterDetailsQuery(
         cluster.id,
