@@ -43,7 +43,7 @@ import time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.base import JobLookupError
 import requests
-
+from passlib.context import CryptContext
 jenkins_router = APIRouter()
 scaling_router = APIRouter()
 
@@ -248,7 +248,39 @@ async def set_interval(cluster_name: str = Form(...), interval: int = Form(...))
     asyncio.create_task(collect_pod_stats(cluster_name, interval)).set_name(f"collect_pods_{cluster_name}")
     return {"message": f"Interval updated to {interval} seconds for cluster {cluster_name}"}
 
+class UserCreate(BaseModel):
+    username: str
+    password: str
 
+class UserLogin(BaseModel):
+    username: str
+    password: str
+# Add these endpoints
+@app.post("/signup")
+async def signup(user: UserCreate):
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE username = ?", (user.username,))
+        if c.fetchone():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        hashed_password = pwd_context.hash(user.password)
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                  (user.username, hashed_password))
+        conn.commit()
+        return {"message": "User created successfully"}
+
+@app.post("/login")
+async def login(user: UserLogin):
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT password_hash FROM users WHERE username = ?", (user.username,))
+        result = c.fetchone()
+        
+        if not result or not pwd_context.verify(user.password, result[0]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        return {"message": "Login successful", "username": user.username}
 @app.get("/list_clusters")
 async def list_clusters():
     try:
