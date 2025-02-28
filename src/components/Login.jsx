@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
+import {toast} from 'react-hot-toast'
 export default function Login() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -20,9 +20,10 @@ export default function Login() {
                 
                 localStorage.setItem('isAuthenticated', 'true');
                 localStorage.setItem('username', data.username); 
+                localStorage.setItem('userRole', data.role);
                 navigate('/dashboard');
               } else {
-                alert('Invalid credentials');
+                toast.error('Invalid credentials');
               }
         } catch (error) {
             console.error('Login error:', error);
@@ -63,14 +64,7 @@ export default function Login() {
                         </button>
                     </div>
                 </form>
-                <div className="text-center">
-                    <p className="text-gray-600">
-                        Don't have an account?{' '}
-                        <a href="/signup" className="text-blue-500 hover:underline">
-                            Sign Up
-                        </a>
-                    </p>
-                </div>
+                
             </div>
         </div>
     );

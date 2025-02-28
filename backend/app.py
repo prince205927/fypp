@@ -44,9 +44,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.base import JobLookupError
 import requests
 from passlib.context import CryptContext
+from fastapi import Depends, HTTPException, status
 jenkins_router = APIRouter()
 scaling_router = APIRouter()
-
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 DB_POOL_SIZE = 5
 db_pool = queue.Queue(maxsize=DB_POOL_SIZE)
 
@@ -109,6 +110,11 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS pod_stats
                  (pod_name TEXT, timestamp TEXT, cpu_percent TEXT, memory_percent TEXT,
                   FOREIGN KEY(pod_name) REFERENCES pods(pod_name))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
+                  password_hash TEXT NOT NULL,
+                  role TEXT NOT NULL CHECK(role IN ('superadmin', 'admin')))''') 
     conn.commit()
     conn.close()
 
@@ -248,39 +254,134 @@ async def set_interval(cluster_name: str = Form(...), interval: int = Form(...))
     asyncio.create_task(collect_pod_stats(cluster_name, interval)).set_name(f"collect_pods_{cluster_name}")
     return {"message": f"Interval updated to {interval} seconds for cluster {cluster_name}"}
 
+# Add superadmin credentials (configure these in production)
+SUPERADMIN_USERNAME = "superadmin"
+SUPERADMIN_PASSWORD = "admin123"
+
+# Update User model and database initialization
 class UserCreate(BaseModel):
     username: str
     password: str
+    role: str = "admin"  # Default role is admin
 
 class UserLogin(BaseModel):
     username: str
     password: str
-# Add these endpoints
-@app.post("/signup")
-async def signup(user: UserCreate):
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+def init_db():
+    conn = sqlite3.connect('cluster_1.db')
+    c = conn.cursor()
+   
+    
+    # Create superadmin if not exists
+    c.execute("SELECT id FROM users WHERE username = ?", (SUPERADMIN_USERNAME,))
+    if not c.fetchone():
+        hashed_password = pwd_context.hash(SUPERADMIN_PASSWORD)
+        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                  (SUPERADMIN_USERNAME, hashed_password, 'superadmin'))
+    conn.commit()
+    conn.close()
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+security = HTTPBasic()
+# Add helper function for authentication
+def get_current_user(credentials: HTTPBasicCredentials = Depends(security)):
     with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM users WHERE username = ?", (user.username,))
-        if c.fetchone():
-            raise HTTPException(status_code=400, detail="Username already exists")
+        c.execute("SELECT * FROM users WHERE username = ?", (credentials.username,))
+        user = c.fetchone()
         
-        hashed_password = pwd_context.hash(user.password)
-        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                  (user.username, hashed_password))
-        conn.commit()
-        return {"message": "User created successfully"}
+        if not user or not pwd_context.verify(credentials.password, user[2]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return {
+            "id": user[0],
+            "username": user[1],
+            "role": user[3]
+        }
+
+# Updated endpoints
+@app.post("/signup")
+async def signup(user: UserCreate):
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            
+            # Check if user exists
+            c.execute("SELECT id FROM users WHERE username = ?", (user.username,))
+            if c.fetchone():
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Username already exists"}
+                )
+            
+            # Insert new user
+            hashed_password = pwd_context.hash(user.password)
+            c.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')",
+                (user.username, hashed_password)
+            )
+            conn.commit()
+            
+            return {"message": "User created successfully"}
+
+    except sqlite3.Error as e:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Database error: {str(e)}"}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)}
+        )
 
 @app.post("/login")
 async def login(user: UserLogin):
     with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("SELECT password_hash FROM users WHERE username = ?", (user.username,))
+        c.execute("SELECT password_hash, role FROM users WHERE username = ?", (user.username,))
         result = c.fetchone()
         
         if not result or not pwd_context.verify(user.password, result[0]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        return {"message": "Login successful", "username": user.username}
+        return {
+            "message": "Login successful",
+            "username": user.username,
+            "role": result[1]
+        }
+
+# Admin management endpoints
+@app.get("/api/admins")
+async def get_admins(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT username, role FROM users")
+        return [{"username": row[0], "role": row[1]} for row in c.fetchall()]
+
+@app.delete("/api/admins/{username}")
+async def delete_admin(username: str, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM users WHERE username = ? AND role = 'admin'", (username,))
+        conn.commit()
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Admin not found")
+        return {"message": "Admin deleted successfully"}
+
 @app.get("/list_clusters")
 async def list_clusters():
     try:

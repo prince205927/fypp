@@ -5,39 +5,56 @@ import { Settings, Server, User, Grid, Plus, X, Trash2, PlusCircle, LogOut } fro
 import { toast } from 'react-toastify';
 import { useGetClustersQuery, useAddClusterMutation, useDeleteClusterMutation } from '../features/clusters/clusterApi';
 import ClusterCardWithDetails from './ClusterCardWithDetails';
-function UserProfileModal({ onClose, onLogout, username }) {
+
+function UserProfileModal({ onClose, onLogout, username, role }) {
   const navigate = useNavigate();
+
   return (
     <div className="fixed inset-0 flex items-center justify-center z-50">
-    <div className="fixed inset-0 bg-black opacity-50" onClick={onClose}></div>
-      <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md  z-10">
-        <h3 className="text-xl font-bold mb-4">User Profile</h3>
-        <p className="text-gray-700 mb-6">Hi, {username}</p>
-        <div className="mb-4">
-          <button
-            onClick={() => navigate('/signup')}
-            className="w-full flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition mb-2"
-          >
-            <PlusCircle size={16} />
-            Add Account
+      <div className="fixed inset-0 bg-black opacity-50" onClick={onClose}></div>
+      <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md z-10">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h3 className="text-xl font-bold">User Profile</h3>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-lg font-medium text-gray-800">{username}</span>
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                role === 'superadmin' 
+                  ? 'bg-purple-100 text-purple-800' 
+                  : 'bg-blue-100 text-blue-800'
+              }`}>
+                {role}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X size={20} />
           </button>
         </div>
-        
-        <div className="mb-4">
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition"
-          >
-            <LogOut size={16} />
-            Log Out
-          </button>
+
+        <div className="space-y-4">
+          {role === 'superadmin' && (
+            <div>
+              <button
+                onClick={() => navigate('/signup')}
+                className="w-full flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+              >
+                <PlusCircle size={16} />
+                Add New Account
+              </button>
+            </div>
+          )}
+
+          <div>
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition"
+            >
+              <LogOut size={16} />
+              Log Out
+            </button>
+          </div>
         </div>
-        <button
-          onClick={onClose}
-          className="w-full flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-300 text-gray-700 hover:bg-gray-400 transition mt-4"
-        >
-          Close
-        </button>
       </div>
     </div>
   );
@@ -130,14 +147,14 @@ export default function MonitoringDashboard() {
         </div>
       </nav>
 
-      {/* User Profile Modal */}
       {isModalOpen && (
-        <UserProfileModal
-          onClose={() => setIsModalOpen(false)}
-          onLogout={handleLogout}
-          username={username}
-        />
-      )}
+  <UserProfileModal
+    onClose={() => setIsModalOpen(false)}
+    onLogout={handleLogout}
+    username={username}
+    role={localStorage.getItem('userRole')} // Make sure to store role during login
+  />
+)}
 
       {/* Main Content */}
       <main className="flex-1 p-8 relative bg-gray-50">
